@@ -1,0 +1,572 @@
+version: v1.0
+steps:
+  s0:
+    displayName: individuals1
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '1'
+    - value: '25001'
+    - value: '250000'
+    outputs:
+      p0:
+        dataName: d2
+        glob: chr1n-1-25001.tar.gz
+  s10:
+    displayName: individuals_merge
+    command: individuals_merge
+    arguments:
+    - value: '1'
+    - value: chr1n-1-25001.tar.gz
+    - value: chr1n-25001-50001.tar.gz
+    - value: chr1n-50001-75001.tar.gz
+    - value: chr1n-75001-100001.tar.gz
+    - value: chr1n-100001-125001.tar.gz
+    - value: chr1n-125001-150001.tar.gz
+    - value: chr1n-150001-175001.tar.gz
+    - value: chr1n-175001-200001.tar.gz
+    - value: chr1n-200001-225001.tar.gz
+    - value: chr1n-225001-250001.tar.gz
+    outputs:
+      p10:
+        dataName: d12
+        glob: chr1n.tar.gz
+  s11:
+    displayName: sifting
+    command: sifting
+    arguments:
+    - value: ALL.chr1.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf
+    - value: '1'
+    outputs:
+      p11:
+        dataName: d14
+        glob: sifted.SIFT.chr1.txt
+  s12:
+    displayName: mutation_overlap1
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: AMR
+    outputs:
+      p12:
+        dataName: d15
+        glob: chr1-AMR.tar.gz
+  s13:
+    displayName: mutation_overlap1-d15-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p12
+    - value: \outputs
+  s14:
+    displayName: frequency1
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: AMR
+    outputs:
+      p13:
+        dataName: d17
+        glob: chr1-AMR-freq.tar.gz
+  s15:
+    displayName: frequency1-d17-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p13
+    - value: \outputs
+  s1:
+    displayName: individuals2
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '25001'
+    - value: '50001'
+    - value: '250000'
+    outputs:
+      p1:
+        dataName: d3
+        glob: chr1n-25001-50001.tar.gz
+  s16:
+    displayName: mutation_overlap2
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: EUR
+    outputs:
+      p14:
+        dataName: d19
+        glob: chr1-EUR.tar.gz
+  s17:
+    displayName: mutation_overlap2-d19-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p14
+    - value: \outputs
+  s18:
+    displayName: frequency2
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: EUR
+    outputs:
+      p15:
+        dataName: d20
+        glob: chr1-EUR-freq.tar.gz
+  s19:
+    displayName: frequency2-d20-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p15
+    - value: \outputs
+  s2:
+    displayName: individuals3
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '50001'
+    - value: '75001'
+    - value: '250000'
+    outputs:
+      p2:
+        dataName: d4
+        glob: chr1n-50001-75001.tar.gz
+  s20:
+    displayName: mutation_overlap3
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: ALL
+    outputs:
+      p16:
+        dataName: d22
+        glob: chr1-ALL.tar.gz
+  s21:
+    displayName: mutation_overlap3-d22-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p16
+    - value: \outputs
+  s22:
+    displayName: frequency3
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: ALL
+    outputs:
+      p17:
+        dataName: d23
+        glob: chr1-ALL-freq.tar.gz
+  s23:
+    displayName: frequency3-d23-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p17
+    - value: \outputs
+  s24:
+    displayName: mutation_overlap4
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: EAS
+    outputs:
+      p18:
+        dataName: d24
+        glob: chr1-EAS.tar.gz
+  s25:
+    displayName: mutation_overlap4-d24-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p18
+    - value: \outputs
+  s26:
+    displayName: frequency4
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: EAS
+    outputs:
+      p19:
+        dataName: d26
+        glob: chr1-EAS-freq.tar.gz
+  s27:
+    displayName: frequency4-d26-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p19
+    - value: \outputs
+  s3:
+    displayName: individuals4
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '75001'
+    - value: '100001'
+    - value: '250000'
+    outputs:
+      p3:
+        dataName: d5
+        glob: chr1n-75001-100001.tar.gz
+  s28:
+    displayName: mutation_overlap5
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: AFR
+    outputs:
+      p20:
+        dataName: d28
+        glob: chr1-AFR.tar.gz
+  s29:
+    displayName: mutation_overlap5-d28-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p20
+    - value: \outputs
+  s30:
+    displayName: frequency5
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: AFR
+    outputs:
+      p21:
+        dataName: d29
+        glob: chr1-AFR-freq.tar.gz
+  s31:
+    displayName: frequency5-d29-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p21
+    - value: \outputs
+  s4:
+    displayName: individuals5
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '100001'
+    - value: '125001'
+    - value: '250000'
+    outputs:
+      p4:
+        dataName: d6
+        glob: chr1n-100001-125001.tar.gz
+  s32:
+    displayName: mutation_overlap6
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: GBR
+    outputs:
+      p22:
+        dataName: d31
+        glob: chr1-GBR.tar.gz
+  s33:
+    displayName: mutation_overlap6-d31-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p22
+    - value: \outputs
+  s34:
+    displayName: frequency6
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: GBR
+    outputs:
+      p23:
+        dataName: d32
+        glob: chr1-GBR-freq.tar.gz
+  s35:
+    displayName: frequency6-d32-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p23
+    - value: \outputs
+  s5:
+    displayName: individuals6
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '125001'
+    - value: '150001'
+    - value: '250000'
+    outputs:
+      p5:
+        dataName: d7
+        glob: chr1n-125001-150001.tar.gz
+  s36:
+    displayName: mutation_overlap7
+    command: mutation_overlap
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: SAS
+    outputs:
+      p24:
+        dataName: d33
+        glob: chr1-SAS.tar.gz
+  s37:
+    displayName: mutation_overlap7-d33-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p24
+    - value: \outputs
+  s38:
+    displayName: frequency7
+    command: frequency
+    arguments:
+    - value: -c
+    - value: '1'
+    - value: -pop
+    - value: SAS
+    outputs:
+      p25:
+        dataName: d35
+        glob: chr1-SAS-freq.tar.gz
+  s39:
+    displayName: frequency7-d35-collector
+    command: cp
+    arguments:
+    - value: -r
+    - valueFrom: p25
+    - value: \outputs
+  s6:
+    displayName: individuals7
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '150001'
+    - value: '175001'
+    - value: '250000'
+    outputs:
+      p6:
+        dataName: d8
+        glob: chr1n-150001-175001.tar.gz
+  s7:
+    displayName: individuals8
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '175001'
+    - value: '200001'
+    - value: '250000'
+    outputs:
+      p7:
+        dataName: d9
+        glob: chr1n-175001-200001.tar.gz
+  s8:
+    displayName: individuals9
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '200001'
+    - value: '225001'
+    - value: '250000'
+    outputs:
+      p8:
+        dataName: d10
+        glob: chr1n-200001-225001.tar.gz
+  s9:
+    displayName: individuals10
+    command: individuals
+    arguments:
+    - value: ALL.chr1.250000.vcf
+    - value: '1'
+    - value: '225001'
+    - value: '250001'
+    - value: '250000'
+    outputs:
+      p9:
+        dataName: d11
+        glob: chr1n-225001-250001.tar.gz
+locations:
+  l0:
+    hostname: 1000genome-swirlc-location-1
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l1:
+    hostname: 1000genome-swirlc-location-2
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l2:
+    hostname: 1000genome-swirlc-location-3
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l3:
+    hostname: 1000genome-swirlc-location-4
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l4:
+    hostname: 1000genome-swirlc-location-5
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l5:
+    hostname: 1000genome-swirlc-location-6
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l6:
+    hostname: 1000genome-swirlc-location-7
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l7:
+    hostname: 1000genome-swirlc-location-8
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l8:
+    hostname: 1000genome-swirlc-location-9
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+  l9:
+    hostname: 1000genome-swirlc-location-10
+    port: 35050
+    connectionType: docker
+    workdir: \workdir
+    outdir: \outputs
+dependencies:
+  d1:
+    type: file
+    value: /data/20130502/columns.txt
+  d16:
+    type: file
+    value: /data/populations/AMR
+  d18:
+    type: file
+    value: /data/populations/EUR
+  d21:
+    type: file
+    value: /data/populations/ALL
+  d25:
+    type: file
+    value: /data/populations/EAS
+  d27:
+    type: file
+    value: /data/populations/AFR
+  d30:
+    type: file
+    value: /data/populations/GBR
+  d34:
+    type: file
+    value: /data/populations/SAS
+  d0:
+    type: file
+    value: /data/20130502/ALL.chr1.250000.vcf
+  d13:
+    type: file
+    value: 
+      /data/20130502/sifting/ALL.chr1.phase3_shapeit2_mvncall_integrated_v5.20130502.sites.annotation.vcf
+  d2:
+    type: file
+  d12:
+    type: file
+  d14:
+    type: file
+  d15:
+    type: file
+  d17:
+    type: file
+  d3:
+    type: file
+  d19:
+    type: file
+  d20:
+    type: file
+  d4:
+    type: file
+  d22:
+    type: file
+  d23:
+    type: file
+  d24:
+    type: file
+  d26:
+    type: file
+  d5:
+    type: file
+  d28:
+    type: file
+  d29:
+    type: file
+  d6:
+    type: file
+  d31:
+    type: file
+  d32:
+    type: file
+  d7:
+    type: file
+  d33:
+    type: file
+  d35:
+    type: file
+  d8:
+    type: file
+  d9:
+    type: file
+  d10:
+    type: file
+  d11:
+    type: file
