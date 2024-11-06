@@ -1,8 +1,11 @@
-use std::{collections::HashMap, io::{Read, Write}, ops::Deref, path::PathBuf, sync::{atomic::AtomicBool, Arc} };
+use std::{collections::HashMap, io::{Read, Write}, ops::Deref, panic, path::PathBuf, sync::{atomic::AtomicBool, Arc} };
+use futures::future::join_all;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::{TcpListener, TcpStream}, sync::{Notify, RwLock}, task::JoinHandle};
-use crate::config::{LocationID, PortID, ADDRESSES};
+use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter}, net::{TcpListener, TcpStream}, sync::{Notify, RwLock}, task::JoinHandle};
+use crate::{amdahline::Amdahline, config::{LocationID, PortID, ADDRESSES}, utils::data_size};
+
+const BUFFER_SIZE: usize = 32 * 1024;
 
 #[derive(Debug)]
 /// StepArgument is an enum that represents the argument of a step command.
@@ -42,7 +45,7 @@ pub enum StepOutput {
 }
 
 #[derive(Eq, PartialEq, Hash, Serialize, Deserialize, Debug, Clone)]
-pub enum DataType {
+pub enum PortData {
   File(String),
   String(String),
   Int(i32),
@@ -50,34 +53,30 @@ pub enum DataType {
   Empty
 }
 
-impl DataType {
+impl PortData {
   pub fn is_empty(&self) -> bool {
     match self {
-      DataType::Empty => true,
+      PortData::Empty => true,
       _ => false
     }
   }
 }
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
-pub enum MessageData {
-  File(Vec<u8>),
-  None
-}
-
-#[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Message {
-  pub message_value: DataType,
-  pub message_data: MessageData
+  pub sender: LocationID,
+  pub port: PortID,
+  pub message_value: PortData,
+  pub data_size: usize
 }
 
 pub struct Port {
   pub port_ready: Notify,
-  pub value: RwLock<DataType>  
+  pub value: RwLock<PortData>  
 }
 
 impl Port {
-  pub async fn set(&self, value: DataType) {
+  pub async fn set(&self, value: PortData) {
     *self.value.write().await = value;
   }
 }
@@ -86,29 +85,36 @@ pub struct Communicator {
   ports: Arc<HashMap<PortID, Port>>,
   location: LocationID,
   workdir: PathBuf,
-  incoming_conn: Arc<RwLock<HashMap<LocationID, TcpStream>>>,
-  closing: Arc<AtomicBool>
+  incoming_messages: Arc<RwLock<HashMap<(LocationID, PortID), (Message, BufReader<TcpStream>)>>>,
+  closing: Arc<AtomicBool>,
+  amdahline: Arc<Amdahline>
 }
 
 impl Communicator {
-  pub fn new(location: LocationID, workdir: PathBuf) -> Communicator {
+  pub async fn new(location: LocationID, workdir: PathBuf, amdahline: Arc<Amdahline>) -> Communicator {
+    let mut workdir = workdir;
     let mut data = HashMap::new();
 
     // initialize data ports
     for port in PortID::iter() {
       data.insert(port, Port {
         port_ready: Notify::new(),
-        value: RwLock::new(DataType::Empty)
+        value: RwLock::new(PortData::Empty)
       });
+    }
+    // make workdir absolute
+    if workdir.is_relative() {
+      workdir = std::env::current_dir().expect("failed to get current dir").join(workdir);
     }
 
     // create the workdir if it does not exist
     let err = std::fs::create_dir_all(&workdir);
 
     match err {
-      Ok(_) => {},
+      Ok(_) => {}
       Err(e) => {
-        panic!("[{:?}] > Failed to create workdir: {}", location, e);
+        println!("{} PANIC: Failed to create workdir at {:?}, error: {:?}", debug_prelude(&location, None), workdir, e);
+        panic!("Failed to create workdir at {:?}, error: {:?}", workdir, e);
       }
     }
 
@@ -116,67 +122,66 @@ impl Communicator {
       ports: Arc::new(data),
       location,
       workdir,
-      incoming_conn: Arc::new(RwLock::new(HashMap::new())),
-      closing: Arc::new(AtomicBool::new(false))
+      incoming_messages: Arc::new(RwLock::new(HashMap::new())),
+      closing: Arc::new(AtomicBool::new(false)),
+      amdahline
     };
 
-    comm.accept_connections();
+    comm.accept_connections().await;
 
     comm
   }
 
-  fn accept_connections(&self) -> JoinHandle<()> {
-    let address = ADDRESSES.get(&self.location).expect("location not found").clone();
-    let self_location = self.location.clone();
-    let incoming_conn = self.incoming_conn.clone();
-    let closing = self.closing.clone();
+  async fn accept_connections(&self) {
+    let listener = |
+      self_location: LocationID,
+      address: String,
+      incoming_messages: Arc<RwLock<HashMap<(LocationID, PortID), (Message, BufReader<TcpStream>)>>>,
+      amdahline: Arc<Amdahline>
+    | async move {
+      let listener = TcpListener::bind(&address).await.expect( "failed to bind listener");
 
-    tokio::spawn(async move {
-      //===================== Connection =====================
-      let listener = TcpListener::bind(address).await.expect("failed to bind");
+      println!("{} Listening on {:?}", debug_prelude(&self_location, None), address);
+
+      let _ = amdahline.begin_task(format!("{:?}", self_location), "accept_connections".to_string());
 
       // accept connections and add them to the incoming connections
       loop {
-        let (mut stream, _) = listener.accept().await.expect("failed to accept");
+        let (mut stream, _) = listener.accept().await.expect( "failed to accept connection");
 
-        // first 1024 bytes are the location id
-        let mut buffer = [0; 1024];
-        stream.read_exact(&mut buffer).await.expect("failed to read");
+        // the sender will first send the message struct, then the data
+        let mut buffer = vec![0; 1024];
+        stream.read_exact(&mut buffer).await.expect( "failed to read message");
 
-        let incoming_location: LocationID = bincode::deserialize(&buffer).expect("failed to deserialize");
+        let message: Message = bincode::deserialize(&buffer).expect( "failed to deserialize message");
 
-        println!("[{:?}] > Connection from {:?}", self_location, incoming_location);
+        let reader = BufReader::new(stream);
 
-        incoming_conn.write().await.insert(incoming_location, stream);
-
-        if closing.load(std::sync::atomic::Ordering::Relaxed) {
-          println!("[{:?}] > Closing incoming connections", self_location);
-
-          for k in incoming_conn.write().await.keys() {
-            let mut stream = incoming_conn.write().await.remove(k).expect("failed to get stream");
-            stream.shutdown().await.expect("failed to shutdown");
-          }
-
-          break;
-        }
+        // save the message
+        incoming_messages.write().await.insert((message.sender, message.port), (message, reader));
       }
-    })
+    };
+
+    tokio::spawn(listener(
+      self.location,
+      ADDRESSES.get(&self.location).expect( "failed to get address").clone(), 
+      self.incoming_messages.clone(),
+      self.amdahline.clone()
+    ));
   }
 
   pub fn close_connections(&self) {
     self.closing.store(true, std::sync::atomic::Ordering::Relaxed);
   }
 
-  pub async fn init_port(&self, port: PortID, value: DataType) {
-    let data = self.ports.get(&port).expect("port not found");
+  pub async fn init_port(&self, port: PortID, value: PortData) {
+    let data = self.ports.get(&port).expect( "port not found");
     data.set(value).await;
     data.port_ready.notify_waiters();
-
-    println!("[{:?}] > Port {:?} initialized", self.location, port);
   }
 
-  pub async fn read_port(&self, port: PortID) -> DataType {
-    let data = self.ports.get(&port).expect("port not found").value.read().await;
+  pub async fn read_port(&self, port: PortID) -> PortData {
+    let data = self.ports.get(&port).expect( "port not found").value.read().await;
     data.clone()
   }
 
@@ -190,105 +195,112 @@ impl Communicator {
     }
   }
 }
-
 /**
  * Send data of a specified port to a remote location
  * after the future is awaited, the port has been read and can be modified, but the send has not completed
  * to wait for the send to complete, await the returned handle
  */
-pub async fn send(comm: Arc<Communicator>, port: PortID, location: LocationID) -> JoinHandle<()> {
-  let remote_address = ADDRESSES.get(&location).expect("location not found").clone();
-
+pub async fn send(comm: Arc<Communicator>, port_id: PortID, destination: LocationID) -> JoinHandle<()> {
   //============================ Copy Data ============================
   // copies the data to a local buffer to be sent
   // after the data is copied, the port can be modified and the send will not be affected
   //===================================================================
   let ports = comm.ports.clone();
-  let port = ports.get(&port).expect("port not found");
+  let port = ports.get(&port_id).expect( "port not found");
+  let amdahline = comm.amdahline.clone();
 
   Communicator::wait_for_port(port).await;
 
   let data = port.value.read().await;
   let data = data.clone();
-  
+
   //============================ Send Data ============================
   tokio::spawn(async move {
-    //============================= Connection =============================
-    let mut stream;
+    let mut stream = connect_to(&comm.location, &destination, &port_id).await;
 
-    while {
-      stream  = TcpStream::connect(&remote_address).await;
-      stream.is_err()
-    } {
-      println!("[{:?}] > Awaiting connection to {}", comm.location, remote_address);
-      tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
-    }
+    let t = amdahline.begin_task(format!("{:?}", comm.location), format!("send {:?} -> {:?}", port_id, destination));
+    println!("{} Sending data {:?} -> {:?}", debug_prelude(&comm.location, None), port_id, destination);
 
-    let mut stream = stream.expect("failed to connect");
-
-    println!("[{:?}] > Connected (send) to {}", comm.location, remote_address);
-    
-    // send the location id to the remote, 1024 bytes
-    let mut buffer = [0; 1024];
-    bincode::serialize_into(&mut buffer[..], &comm.location).expect("failed to serialize");
-
-    stream.write_all(&buffer).await.expect("failed to write");
-
-    //============================= Communication =============================
+    //============================= Preparing data =============================
     match data {
-      DataType::File(path) => {
+      PortData::File(path) => {
         // open file
-        let mut file = std::fs::File::open(&path).expect("failed to open file");
-        let mut buffer: Vec<u8> = vec![];
-        file.read_to_end(&mut buffer).expect("failed to read file");
+        let mut file = std::fs::File::open(&path).expect( "failed to open file");
 
-        let name = PathBuf::from(&path).file_name().expect("failed to get file name").to_str().expect("failed to convert to string").to_string();
+        let name = PathBuf::from(&path)
+          .file_name().expect( "failed to get file name")
+          .to_str().expect( "failed to convert to string")
+          .to_string();
 
         let message = Message {
-          message_value: DataType::File(name),
-          message_data: MessageData::File(buffer)
+          sender: comm.location,
+          port: port_id,
+          message_value: PortData::File(name),
+          data_size: file.metadata().expect( "failed to get metadata").len() as usize
         };
+        
+        let mut message = bincode::serialize(&message).expect( "failed to serialize message");
+        assert!(message.len() <= 1024, "{} PANIC: message too large: {:?}", debug_prelude(&comm.location, None), message.len());
+        message.resize(1024, 0);
 
-        let message = bincode::serialize(&message).expect("failed to serialize");
+        // read file and send BUFFER_SIZE Bytes at a time
+        let mut buffer= [0; BUFFER_SIZE];
 
-        stream.write_all(&message).await.expect("failed to write");
+        // send message
+        stream.write_all(&message).await.expect( "failed to write message");
+
+        // send file
+        while file.read(&mut buffer).expect( "failed to read file") > 0 {
+          stream.write_all(&buffer).await.expect( "failed to write file");
+        }
+
+        stream.flush().await.expect( "failed to flush stream");
+        stream.shutdown().await.expect( "failed to shutdown stream");
+
       },
-      DataType::String(data) => {
+      PortData::Empty => {
+        println!("PANIC: empty data");
+        panic!("empty data");
+      },
+      data => {
         let message = Message {
-          message_value: DataType::String(data.clone()),
-          message_data: MessageData::None
+          sender: comm.location,
+          port: port_id,
+          message_value: data,
+          data_size: 0
         };
 
-        let message = bincode::serialize(&message).expect("failed to serialize");
+        let message = bincode::serialize(&message).expect("failed to serialize message");
 
-        stream.write_all(&message).await.expect("failed to write");
+        stream.write_all(&message).await.expect("failed to write message");
+        stream.flush().await.expect("failed to flush stream");
+        stream.shutdown().await.expect("failed to shutdown stream");
       },
-      DataType::Int(data) => {
-        let message = Message {
-          message_value: DataType::Int(data.clone()),
-          message_data: MessageData::None
-        };
+    };
 
-        let message = bincode::serialize(&message).expect("failed to serialize");
+    println!("{} Sent data {:?} -> {:?}", debug_prelude(&comm.location, None), port_id, destination);
 
-        stream.write_all(&message).await.expect("failed to write");
-      },
-      DataType::Bool(data) => {
-        let message = Message {
-          message_value: DataType::Bool(data.clone()),
-          message_data: MessageData::None
-        };
-
-        let message = bincode::serialize(&message).expect("failed to serialize");
-
-        stream.write_all(&message).await.expect("failed to write");
-      },
-      DataType::Empty => { panic!("empty data"); }
-    }
-    
-    // close connection
-    stream.shutdown().await.expect("failed to shutdown");
+    amdahline.end_task(format!("{:?}", comm.location), t);
   })
+}
+
+async fn connect_to(source: &LocationID, destination: &LocationID, port_id: &PortID) -> BufWriter<TcpStream> {
+  let address = ADDRESSES.get(&destination).expect( "failed to get address").clone();
+
+  let mut stream;
+
+  while {
+    stream = TcpStream::connect(&address).await;
+    stream.is_err()
+  } {
+    tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+  }
+
+  let stream = stream.unwrap();
+
+  let writer = BufWriter::new(stream);
+
+  writer
 }
 
 /**
@@ -297,59 +309,56 @@ pub async fn send(comm: Arc<Communicator>, port: PortID, location: LocationID) -
  * to wait for the receive to complete, await the returned handle
  */
 pub async fn receive(comm: Arc<Communicator>, port: PortID, sender: LocationID) -> JoinHandle<()> {
-    comm.ports.get(&port).expect("port not found").set(DataType::Empty).await;
+    comm.ports.get(&port).expect( "port not found").set(PortData::Empty).await;
+    let amdahline = comm.amdahline.clone();
     
     tokio::spawn(async move {
       //===================== Connection =====================
-      while comm.incoming_conn.read().await.get(&sender).is_none() {
-        println!("[{:?}] > Awaiting connection from {:?}", comm.location, sender);
+      while comm.incoming_messages.read().await.get(&(sender, port)).is_none() {
         tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
       }
 
-      let mut stream = comm.incoming_conn.write().await.remove(&sender).expect("failed to get stream");
+      let t = amdahline.begin_task(format!("{:?}", comm.location), format!("receive {:?} <- {:?}", port, sender));
 
-      //===================== Communication =====================
-      let mut buffer: Vec<u8> = vec![];
-      stream.read_to_end(&mut buffer).await.expect("failed to read");
-    
-      let message: Message = bincode::deserialize(&buffer).expect("failed to deserialize");
+      println!("{} Receiving data {:?} <- {:?}", debug_prelude(&comm.location, None), port, sender);
+
+      let (message, mut stream) = comm.incoming_messages.write().await.remove(&(sender, port)).expect( "failed to remove message");
 
       //===================== Data Handling =====================
-      let port = comm.ports.get(&port).expect("port not found");
+      let port_data = comm.ports.get(&port).expect( "port not found");
 
       match message.message_value {
-        DataType::File(name) => {
-          if let MessageData::File(data) = message.message_data {
-            let path = comm.workdir.join("receive");
-            std::fs::create_dir_all(&path).expect("failed to create receive dir");
+        PortData::File(name) => {
+          let path = comm.workdir.join(format!("receive_{:?}", comm.location));
+          std::fs::create_dir_all(&path).expect( "failed to create receive dir");
 
-            let path = path.join(&name);
-            println!("[{:?}] > Received file: {:?}, {} bytes", comm.location, path, data.len());
-            let file = std::fs::File::create(&path).expect("failed to create file");
+          let path = path.join(&name);
+          let file = std::fs::File::create(&path).expect( "failed to create file");
 
-            let mut file = std::io::BufWriter::new(file);
-            file.write_all(&data).expect("failed to write file");
-            port.set(DataType::File(path.to_str().expect("failed to convert to string").to_string())).await;
-          } else {
-            panic!("[{:?}] > Expected file data", comm.location);
+          let mut file = std::io::BufWriter::new(file);
+
+          let mut buffer = [0; BUFFER_SIZE];
+
+          while let Ok(size) = stream.read(&mut buffer).await {
+            if size == 0 { break; }
+            file.write_all(&buffer[..size]).expect( "failed to write to file");
           }
+
+          port_data.set(PortData::File(path.to_str().expect( "failed to convert to string").to_string())).await;
         },
-        DataType::String(value) => {
-          println!("[{:?}] > Received string: {:?}", comm.location, value);
-          port.set(DataType::String(value)).await;
+        PortData::Empty => {
+          panic!("empty data");
         },
-        DataType::Int(value) => {
-          println!("[{:?}] > Received int: {:?}", comm.location, value);
-          port.set(DataType::Int(value)).await;
-        },
-        DataType::Bool(value) => {
-          println!("[{:?}] > Received bool: {:?}", comm.location, value);
-          port.set(DataType::Bool(value)).await;
-        },
-        DataType::Empty => { panic!("[{:?}] > empty data", comm.location); }
+        data => {
+          port_data.set(data).await;
+        }
       }
 
-      port.port_ready.notify_waiters();
+      println!("{} Received data {:?} <- {:?}", debug_prelude(&comm.location, None), port, sender);
+
+      port_data.port_ready.notify_waiters();
+
+      amdahline.end_task(format!("{:?}", comm.location), t);
     })
   }
 
@@ -362,17 +371,56 @@ pub async fn exec(
   comm: Arc<Communicator>,
   step_name: String,
   step_display_name: String,
+  input_ports: Vec<PortID>,
   output_port: Option<PortID>,
   output_type: StepOutput,
   cmd: String,
   args: Vec<StepArgument>
 ) {
-  println!("[{:?}] > Starting step: {}", comm.location, step_display_name);
+  let amdahline = comm.amdahline.clone();
 
-  let step_workdir = comm.workdir.join(format!("step_{}", step_name));
-  std::fs::create_dir_all(&step_workdir).expect("failed to create step workdir");
+  let mut step_workdir = comm.workdir.join(format!("step_{}", step_name));
 
-  //======================== Builds the arguments ========================
+  let step_workdir_str = step_workdir.to_str().expect( "failed to convert to string");
+  let step_workdir_str = format!("failed to convert to string: {:?}", step_workdir_str);
+  std::fs::create_dir_all(&step_workdir).expect( &step_workdir_str);
+
+  step_workdir = comm.workdir.join(format!("step_{}", step_name));
+  step_workdir = step_workdir.canonicalize().expect(format!("failed to canonicalize {:?}", step_workdir).as_str());
+
+  // loop over the ports
+  for input_port in input_ports {
+    let port = comm.ports.get(&input_port).expect( "port not found");
+
+    Communicator::wait_for_port(port).await;
+
+    let data = port.value.read().await;
+    let data = data.deref();
+
+    match data {
+      PortData::File(path) => {
+        // link the file to the step workdir
+        let file_path = PathBuf::from(path);
+        let file_name = file_path
+          .file_name().expect( "failed to get file name")
+          .to_str().expect( "failed to convert to string")
+          .to_string();
+
+        let new_path = step_workdir.join(&file_name);
+
+        // create symlink
+        #[cfg(unix)] {
+          std::os::unix::fs::symlink(&file_path, &new_path).expect( "failed to create symlink");
+        }
+      },
+      PortData::Empty => {
+        panic!("empty data");
+      },
+      _ => {}
+    }
+  }
+
+  //======================== Build arguments ========================
   let mut arguments: Vec<String> = vec![];
 
   for arg in args {
@@ -381,7 +429,7 @@ pub async fn exec(
         arguments.push(value);
       },
       StepArgument::Port(port_id) => {
-        let port = comm.ports.get(&port_id).expect("port not found");
+        let port = comm.ports.get(&port_id).expect( "port not found");
 
         Communicator::wait_for_port(port).await;
 
@@ -389,43 +437,34 @@ pub async fn exec(
         let data = data.deref();
 
         match data {
-          DataType::File(path) => {
-            // if on unix, create a symbolic link
-            #[cfg(unix)] {
-              let file_path = PathBuf::from(path);
-              let link_path = step_workdir.join(file_path.file_name().expect("failed to get file name"));
-
-              println!("[{:?}] > Creating symbolic link: {:?} -> {:?}", self.self_location, file_path, link_path);
-
-              std::os::unix::fs::symlink(file_path, link_path).expect("failed to create symbolic link");
-              arguments.push(link_path.to_str().expect("failed to convert to string").to_string());
-            }
-            // if on windows, point to the file relative to the workdir
-            #[cfg(windows)] {
-              let file_path = PathBuf::from(path);
-              let relative_path = pathdiff::diff_paths(&file_path, &step_workdir).expect("failed to get relative path");
-
-              println!("[{:?}] > Using relative path: {:?}", comm.location, relative_path);
-
-              arguments.push(relative_path.to_str().expect("failed to convert to string").to_string());
-            }
+          PortData::File(path) => {
+            // if the argument is a file, the file should be already linked to the step workdir
+            let filename = PathBuf::from(path)
+              .file_name().expect( "failed to get file name")
+              .to_str().expect( "failed to convert to string")
+              .to_string();
+            arguments.push(filename);
           },
-          DataType::String(value) => {
+          PortData::String(value) => {
             arguments.push(value.clone());
           },
-          DataType::Int(value) => {
+          PortData::Int(value) => {
             arguments.push(value.to_string());
           },
-          DataType::Bool(value) => {
+          PortData::Bool(value) => {
             arguments.push(value.to_string());
           },
-          DataType::Empty => { panic!("empty data"); }
+          PortData::Empty => {
+            panic!("empty data");
+          }
         }
       }
     }
   }
   
   //======================== Execute Command ========================
+  let t = amdahline.begin_task(format!("{:?}", comm.location), format!("exec {:?} ({})", step_name, step_display_name));
+
   let mut cmd = cmd;
 
   #[cfg(windows)] {
@@ -437,40 +476,98 @@ pub async fn exec(
 
   let arguments = arguments.join(" ");
 
-  println!("[{:?}] > Running command: '{} {}'", comm.location, cmd, arguments);
+  println!("{} Running command: '{} {}'", debug_prelude(&comm.location, Some(&step_name)), cmd, arguments);
 
-  let output = std::process::Command::new(cmd)
-    .args(arguments.split_whitespace())
-    .current_dir(&step_workdir)
-    .output()
-    .expect("failed to execute process");
+  let start_time = std::time::Instant::now();
+
+  let (output, status) = match output_type {
+    StepOutput::Stdout => {
+      let child = tokio::process::Command::new(&cmd)
+        .args(arguments.split_whitespace())
+        .current_dir(&step_workdir)
+        .stdout(std::process::Stdio::piped())
+        .spawn()
+        .expect( "failed to spawn command");
+
+      println!("{} Command spawned", debug_prelude(&comm.location, Some(&step_name)));
+
+      let output = child.wait_with_output().await.expect( "failed to wait with output");
+      let status = output.status;
+
+      (Some(output), status)
+    },
+    _ => {
+      let _step_workdir = step_workdir.clone();
+      tokio::task::spawn_blocking(move || {
+        let status = std::process::Command::new(&cmd)
+          .args(arguments.split_whitespace())
+          .current_dir(&_step_workdir)
+          .status()
+          .expect( "failed to spawn command");
+
+        (None, status)
+      }).await.expect( "failed to spawn blocking")
+    }
+  };
+
+  if !status.success() {
+    panic!("Command failed with status: {}", status);
+  }
+
+  println!("{} Completed step: {} in {}s", debug_prelude(&comm.location, Some(&step_name)), step_name, start_time.elapsed().as_secs());
 
   if output_port.is_none() { return; }
 
-  let port = comm.ports.get(&output_port.unwrap()).expect("port not found");
+  let port = comm.ports.get(&output_port.unwrap()).expect( "port not found");
 
   match output_type {
     StepOutput::File(path_regex) => {
-      let res = glob::glob(&format!("{}/{}", step_workdir.to_str().expect("failed to convert to string"), path_regex)).expect("failed to glob");
-      let res = res.collect::<Result<Vec<_>, _>>().expect("failed to collect");
+      let path_regex = path_regex.replace("/", "\\");
 
-      if res.len() == 0 { panic!("No files found"); }
-      if res.len() > 1 { panic!("Multiple files found"); }
+      let path_regex = step_workdir.join(path_regex);
+
+      let path_regex = path_regex.to_str().expect("failed to convert to string").to_string();
+
+      let res = glob::glob(path_regex.as_str()).expect("failed to glob");
+      let res = res.collect::<Result<Vec<_>, _>>().expect( "failed to collect");
+
+      if res.len() == 0 {
+        let available_files = std::fs::read_dir(&step_workdir).expect("failed to read dir").map(|res| res.unwrap().path()).collect::<Vec<_>>();
+        panic!("No files found for regex: {}, available files: {:?}", path_regex, available_files);
+      }
+
+      if res.len() > 1 {
+        panic!("Multiple files found for regex: {}", path_regex);
+      }
       
       let path = res[0].to_str().expect("failed to convert to string").to_string();
 
-      port.set(DataType::File(path)).await;
+      port.set(PortData::File(path)).await;
       port.port_ready.notify_waiters();
     },
     StepOutput::Stdout => {
-      let stdout = String::from_utf8(output.stdout).expect("failed to convert output to string");
-      
-      port.set(DataType::String(stdout)).await;
+      let stdout = String::from_utf8(output.expect("failed to get output").stdout).expect("failed to convert output to string");
+
+      port.set(PortData::String(stdout)).await;
       port.port_ready.notify_waiters();
     },
     StepOutput::None => {
-      port.set(DataType::Empty).await;
+      port.set(PortData::Empty).await;
       port.port_ready.notify_waiters();
     }
   }
+
+  amdahline.end_task(format!("{:?}", comm.location), t);
+}
+
+pub fn debug_prelude(location: &LocationID, steap_name: Option<&String>) -> String {
+  // [HH:MM:SS] [location] [step_name] >>>
+  let time = chrono::Local::now().format("%H:%M:%S").to_string();
+  let location = format!("{:?}", location);
+  let step_name = match steap_name {
+    Some(step_name) => format!(" [{}]", step_name),
+    None => "".to_string()
+  };
+
+  format!("[{}] [{}]{} >>> ", time, location, step_name)
 }

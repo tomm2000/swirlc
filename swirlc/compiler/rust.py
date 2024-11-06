@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import glob
 import os
 import stat
 import sys
@@ -17,7 +18,7 @@ from swirlc.log_handler import logger
 from swirlc.version import VERSION
 
 # "release" or "debug"
-BUILD_MODE = "debug"
+BUILD_MODE = "release"
 
 cargo_toml = """
 [package]
@@ -28,17 +29,16 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-serde = { version = "1.0.210", features = ["derive"] }
+serde = { version = "1.0.214", features = ["derive"] }
 chrono = "0.4"
-tokio = { version = "1.40.0", features = ["full"] }
-systemstat = "0.2.3"
-serde_yml = "0.0.12"
+tokio = { version = "1.41.0", features = ["full"] }
 lazy_static = "1.5.0"
 bincode = "1.3.3"
 strum = "0.26.3"
 strum_macros = "0.26"
-pathdiff = "0.2.2"
 glob = "0.3.1"
+futures = "0.3.31"
+uuid = { version = "1.11.0", features = ["v4"] }
 """
 
 bash_header = f"""#!/bin/sh
@@ -49,14 +49,18 @@ bash_header = f"""#!/bin/sh
 
 rust_main_start = """
 use std::{path::PathBuf, sync::Arc};
-use comm::{Communicator, DataType, StepOutput};
+use comm::{Communicator, PortData, StepOutput};
 use config::{LocationID, PortID, ADDRESSES};
+use amdahline::Amdahline;
 
 pub mod comm;
 pub mod config;
+pub mod utils;
+pub mod amdahline;
 
 #[tokio::main]
 pub async fn main() {
+  let start = std::time::Instant::now();
 """
 
 rust_main_end = """
@@ -100,6 +104,7 @@ class RustTarget(BaseCompiler):
         self.workflow: DistributedWorkflow | None = None
         self.thread_stacks: MutableMapping[str, ThreadStack] = {}
         self.active_locations: MutableSequence[Location] = []
+        # self.send_stack = [] # SEND STACK
 
     def _get_indentation(self):
         return " " * 4 if self.parallel_step_counter > 0 else ""
@@ -109,13 +114,13 @@ class RustTarget(BaseCompiler):
     
     def begin_workflow(self, workflow: Workflow) -> None:
         # clear the build directory recursively
-        shutil.rmtree("build", ignore_errors=True)
+        # shutil.rmtree(".", ignore_errors=True)
         
         self.workflow = workflow
 
     def end_workflow(self) -> None:
         # build the workspace cargo.toml
-        with open(f"build/Cargo.toml", "w") as f:
+        with open(f"Cargo.toml", "w") as f:
             f.write(
 f"""
 [workspace]
@@ -125,7 +130,7 @@ resolver = "2"
             )
 
         # build the run.sh script in the build directory
-        with open(f"build/run.sh", "w") as f:
+        with open(f"run.sh", "w") as f:
             f.write(bash_header)
             
             f.write(
@@ -136,38 +141,59 @@ trap "echo Force termination; pkill -P $$" INT
 """
             )
 
+            # copy commands
+            commands = False
             for location in self.active_locations:
-                f.write(
-f"""
-./target/{BUILD_MODE}/{location.name}.exe &"""
-                )
+                file = f"./build/target/{BUILD_MODE}/{location.name}"
+                
+                command = location.get_copy_command(file, f"{location.hostname}:{location.workdir}")
 
-            f.write(
-f"""
-wait
-echo "Workflow execution terminated"
-"""
-            )
+                if command:
+                    f.write(f"{command} &\n")
+                    commands = True
+                    
+            if commands:
+                f.write("wait\n")
+
+            f.write("\n\n")
+
+            # execution commands
+            commands = False
+            for location in self.active_locations:
+                command = location.get_command(f"./{location.name}")
+
+                if command:
+                    f.write(f"{command} &\n")
+                    commands = True
+
+            if commands:
+                f.write("wait\n")
+
             
         # format the rust code
-        os.system(f"cd build && cargo fmt")
 
-        # fix the code if on release mode
-        if BUILD_MODE == "release":
-            os.system(f"cd build && cargo fix --allow-no-vcs --workspace")
+        # os.system(f"cargo fmt")
 
         # compile the rust code
         release = "--release" if BUILD_MODE == "release" else ""
-        # os.system(f"cd build && cargo build {release}")
+        os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release}")
 
     # DONE
     def begin_location(self, location: Location) -> None:
-      build_path = f"build/{location.name}/"
+      build_path = f"{location.name}/"
+
+      # create the location directory
+      os.makedirs(build_path, exist_ok=True)
+
       self.current_location = location
       self.active_locations.append(location)
 
       # copy the "rust_base" directory to the build path
-      shutil.copytree("rust_base", build_path)
+      shutil.copytree("/rust_base", build_path, dirs_exist_ok=True)
+      # shutil.copytree("./rust_base", build_path, dirs_exist_ok=True)
+
+        # create the "src" directory
+      os.makedirs(f"{build_path}src", exist_ok=True)
 
       # create the cargo.toml file
       with open(f"{build_path}Cargo.toml", "w") as f:
@@ -178,15 +204,20 @@ echo "Workflow execution terminated"
         f.write(rust_main_start)
 
         f.write(f"""
-  let workdir = PathBuf::from("workdir\\\\{location.name}");
+  let amdahline = Arc::new(Amdahline::new("amdahline_{self.current_location.name}.txt".to_string()));
+
+  amdahline.register_executor("{self.current_location.name.upper()}".to_string());
+
+  let workdir = PathBuf::from("{self.current_location.workdir}");
   """
         )
 
         f.write(f"""
   let communicator = Arc::new(Communicator::new(
     LocationID::{location.name.upper()},
-    workdir
-  ));
+    workdir,
+    amdahline.clone()
+  ).await);
   """
         );
 
@@ -203,6 +234,17 @@ echo "Workflow execution terminated"
     """
             )
 
+        self.programs[self.current_location.name].write(f"""
+  amdahline.unregister_executor("{self.current_location.name.upper()}".to_string());
+
+  amdahline.close();
+                                                        
+  println!("{self.current_location.name} finished in {{:?}}", start.elapsed());
+
+    """
+            )
+
+
         # end the main.rs file
         self.programs[self.current_location.name].write(rust_main_end)
 
@@ -217,8 +259,10 @@ echo "Workflow execution terminated"
         ports += "\n}"
 
         addresses = ""
+        i = 0
         for location in self.workflow.locations.values():
-            addresses += f"    m.insert(LocationID::{location.name.upper()}, \"{location.hostname}:{location.port}\".to_string());\n"
+            addresses += f"    m.insert(LocationID::{location.name.upper()}, \"{location.hostname}:{location.port+i}\".to_string());\n"
+            i += 1
         
 
         config_string = f"""
@@ -231,7 +275,7 @@ use strum_macros::EnumIter;
 #[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum LocationID { locations }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, EnumIter)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, EnumIter, Serialize, Deserialize)]
 pub enum PortID {ports}
 
 lazy_static! {{
@@ -242,13 +286,12 @@ lazy_static! {{
 }}
         """
 
-        with open(f"build/{self.current_location.name}/src/config.rs", "w") as f:
+        with open(f"{self.current_location.name}/src/config.rs", "w") as f:
             f.write(config_string)
 
         # close the main.rs file
         self.programs[self.current_location.name].close()
 
-    # UNTESTED
     def begin_dataset(
         self,
         dataset: MutableSequence[tuple[str, Data]],
@@ -257,31 +300,29 @@ lazy_static! {{
             self.current_location.data[data.name] = data
             if data.type == "file":
                 self.programs[self.current_location.name].write(f"""
-  communicator.init_port(PortID::{port_name.upper()}, DataType::File("{data.value}".to_string())).await;"""
+  communicator.init_port(PortID::{port_name.upper()}, PortData::File("{data.value}".to_string())).await;"""
                 )
 
             elif data.type == "string":
                 self.programs[self.current_location.name].write(f"""
-  communicator.init_port(PortID::{port_name.upper()}, DataType::String("{data.value}".to_string())).await;
+  communicator.init_port(PortID::{port_name.upper()}, PortData::String("{data.value}".to_string())).await;
   """
                 )
 
             elif data.type == "int":
                 self.programs[self.current_location.name].write(f"""
-  communicator.init_port(PortID::{port_name.upper()}, DataType::Int({data.value})).await;
+  communicator.init_port(PortID::{port_name.upper()}, PortData::Int({data.value})).await;
   """
                 )
 
             elif data.type == "bool":
                 self.programs[self.current_location.name].write(f"""
-  communicator.init_port(PortID::{port_name.upper()}, DataType::Bool({data.value})).await;
+  communicator.init_port(PortID::{port_name.upper()}, PortData::Bool({data.value})).await;
   """
                 )
 
             else:
                 raise ValueError(f"Unsupported data type: {data.type}")
-
-
 
     def choice(self):
         raise NotImplementedError("Choice is not implemented yet")
@@ -306,6 +347,11 @@ lazy_static! {{
             output_value = f"\"{step.processors[output_port_name].glob}\""
             output = f"File({output_value}.to_string())"
 
+        # input ports
+        input_ports = ""
+        for port_name, _ in flow[0]:
+            input_ports += f"PortID::{port_name.upper()},\n\t\t\t\t"
+
         # arguments
         arguments = ""
         for arg in step.arguments:
@@ -323,6 +369,8 @@ lazy_static! {{
       communicator.clone(), // communicator
       "{step.name}".to_string(), // name
       "{step.display_name}".to_string(), // display name
+      vec![ // input ports
+      {input_ports}],
       {output_port}, // output port
       StepOutput::{output}, // output
       "{step.command}".to_string(), // command
@@ -346,8 +394,7 @@ lazy_static! {{
 
     def seq(self):
         if (
-            self.current_location.name in self.thread_stacks.keys()
-            and self.thread_stacks[self.current_location.name].get_group()
+            self.thread_stacks[self.current_location.name].get_group()
         ):
             self.programs[self.current_location.name].write(
                 f"""\n
@@ -364,6 +411,7 @@ lazy_static! {{
 
     def end_paren(self):
         self.parathetized = False
+
         if self.thread_stacks[self.current_location.name].get_group():
             self.programs[self.current_location.name].write(
                 f"""\n
@@ -371,13 +419,12 @@ lazy_static! {{
             )
             self.thread_stacks[self.current_location.name].add_group()
 
-    # DONE
     def begin_par(self) -> None:
         if self.parallel_step_counter == 0 and not self.parathetized:
             self.programs[self.current_location.name].write(
                 f"""\n
   // begin par
-  {self._get_indentation()}let f{self.function_counter} = |communicator: Arc<Communicator>| async move {"{"}"""
+  let f{self.function_counter} = |communicator: Arc<Communicator>| async move {"{"}"""
             )
             self.functions.append(f"f{self.function_counter}")
             self.function_counter += 1
@@ -433,7 +480,6 @@ f"""
             if thread_stack.stack:
                 self.programs[self.current_location.name].write(
 f"""
-
   tokio::join!({', '.join(thread_stack.get_group())}); // close macro parallel
 """
                 )
