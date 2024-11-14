@@ -1,0 +1,5 @@
+changing workdir ""workdir\\ld"" to absolute
+workdir is now ""C:\\Users\\tomma\\Desktop\\swirl-crust\\workdir\\ld""
+Starting step: individuals_merge (s1), workdir: "\\\\?\\C:\\Users\\tomma\\Desktop\\swirl-crust\\workdir\\ld\\step_s1"
+Running command: 'cat > message.txt'
+failed to spawn

@@ -1,7 +1,7 @@
 use std::{path::PathBuf, sync::Arc};
 
 // =========================== PRELUDE ===========================
-use crate::{comm::{self, Communicator, DataType, StepOutput}, config::{LocationID, PortID, ADDRESSES}};
+use crate::{amdahline::Amdahline, comm::{self, Communicator, PortData, StepOutput}, config::{LocationID, PortID, ADDRESSES}};
 
 // =========================== MAIN FUNCTION ===========================
 pub async fn run() {
@@ -9,34 +9,43 @@ pub async fn run() {
 
   let workdir = PathBuf::from("workdir\\ld");
   let _ = std::fs::remove_dir_all(&workdir);
+  
+  let amdahline = Arc::new(Amdahline::new("ld.txt".to_string()));
 
   let communicator = Communicator::new(
     LocationID::LD,
-    workdir
-  );
+    workdir,
+    amdahline.clone(),
+  ).await;
+
+  amdahline.register_executor("LD".to_string());
 
   let communicator = Arc::new(communicator);
 
-  let f1 = |communicator: Arc<Communicator>| async move {
+  let communicator_clone = communicator.clone();
+  let exec = std::thread::spawn(move || async move {
     comm::exec(
-      communicator.clone(), // communicator
+      communicator_clone, // communicator
       "s1".to_string(), // name
       "individuals_merge".to_string(), // display name
+      vec![],
       Some(PortID::P1), // output port
       StepOutput::File("message.txt".to_string()), // output type
-      "cat".to_string(), // command
+      "ls".to_string(), // command
       vec![ // arguments
         "> message.txt".into(),
       ]
     ).await;
+  });
 
-    let send_handle = comm::send(communicator.clone(), PortID::P1, LocationID::L1).await;
-    
-    tokio::join!(send_handle);
-  };
+  exec.join();
 
-  tokio::spawn(f1(communicator.clone()));
+  let send_handle = comm::send(communicator.clone(), PortID::P1, LocationID::L1).await;
+  
+  tokio::join!(send_handle);
 
   communicator.close_connections();
+
+  amdahline.unregister_executor("LD".to_string());
 }
 // =====================================================================

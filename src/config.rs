@@ -10,7 +10,7 @@ pub enum LocationID {
   LD,
 }
 
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, EnumIter)]
+#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, EnumIter, Serialize, Deserialize)]
 pub enum PortID {
   P1,
   P2
