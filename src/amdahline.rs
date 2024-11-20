@@ -53,13 +53,6 @@ impl Amdahline {
     uuid
   }
 
-  pub fn ping_task(&self, executor_id: String, uuid: uuid::Uuid) {
-    let time = chrono::Local::now().format("%H:%M:%S").to_string();
-    let message = format!("[{}] PING <{}> <{}>\n", time, executor_id, uuid);
-
-    self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
-  }
-
   pub fn end_task(&self, executor_id: String, uuid: uuid::Uuid) {
     let time = chrono::Local::now().format("%H:%M:%S").to_string();
     let message = format!("[{}] END <{}> <{}>\n", time, executor_id, uuid);
