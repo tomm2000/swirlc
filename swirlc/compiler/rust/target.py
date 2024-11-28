@@ -1,73 +1,20 @@
 from __future__ import annotations
 
-import glob
 import os
-import stat
 import sys
-from pathlib import Path
 from typing import MutableMapping, MutableSequence, TextIO
 import shutil
-from threading import Thread
-import time
 
-from black import WriteBack
-
+from swirlc.compiler.rust.cargo_file import build_cargo_file
+from swirlc.compiler.rust.config_file import build_config_file
+from swirlc.compiler.rust.run_script import build_run_script
+from swirlc.compiler.rust.location_main import start_location_file, close_location_file
 from swirlc.core.compiler import BaseCompiler
 from swirlc.core.entity import Location, Step, Port, Workflow, DistributedWorkflow, Data
-from swirlc.log_handler import logger
 from swirlc.version import VERSION
 
 # "release" or "debug"
 BUILD_MODE = "release"
-
-cargo_toml = """
-[package]
-name = "[LOCATION_NAME]"
-version = "0.1.0"
-edition = "2021"
-
-# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-
-[dependencies]
-serde = { version = "1.0.214", features = ["derive"] }
-chrono = "0.4"
-tokio = { version = "1.41.0", features = ["full"] }
-lazy_static = "1.5.0"
-bincode = "1.3.3"
-strum = "0.26.3"
-strum_macros = "0.26"
-glob = "0.3.1"
-futures = "0.3.31"
-uuid = { version = "1.11.0", features = ["v4"] }
-"""
-
-bash_header = f"""#!/bin/sh
-
-# This file was generated automatically using SWIRL v{VERSION},
-# using command swirlc {' '.join(sys.argv[1:])}
-"""
-
-rust_main_start = """
-use std::{path::PathBuf, sync::Arc};
-use comm::{Communicator, PortData, StepOutput};
-use config::{LocationID, PortID, ADDRESSES};
-use amdahline::Amdahline;
-
-pub mod comm;
-pub mod config;
-pub mod utils;
-pub mod amdahline;
-
-#[tokio::main]
-pub async fn main() {
-  let start = std::time::Instant::now();
-"""
-
-rust_main_end = """
-  communicator.close_connections();
-}
-"""
-
 
 class ThreadStack:
     def __init__(self):
@@ -104,126 +51,34 @@ class RustTarget(BaseCompiler):
         self.workflow: DistributedWorkflow | None = None
         self.thread_stacks: MutableMapping[str, ThreadStack] = {}
         self.active_locations: MutableSequence[Location] = []
-        # self.send_stack = [] # SEND STACK
-
-    def _get_indentation(self):
-        return " " * 4 if self.parallel_step_counter > 0 else ""
 
     def _get_thread(self, location: str) -> str:
         return self.thread_stacks.setdefault(location, ThreadStack()).add_thread()
     
     def begin_workflow(self, workflow: Workflow) -> None:
-        # clear the build directory recursively
-        # shutil.rmtree(".", ignore_errors=True)
-        
         self.workflow = workflow
 
+        shutil.copytree("/rust_base", "./", dirs_exist_ok=True)
+
+        os.makedirs(f"./src/bin", exist_ok=True)
+
     def end_workflow(self) -> None:
-        # build the workspace cargo.toml
-        with open(f"Cargo.toml", "w") as f:
-            f.write(
-f"""
-[workspace]
-members = [{', '.join([f'"{location.name}"' for location in self.active_locations])}]
-resolver = "2"
-""" 
-            )
-
-        # build the run.sh script in the build directory
-        with open(f"run.sh", "w") as f:
-            f.write(bash_header)
-            
-            f.write(
-f"""
-trap "echo Force termination; pkill -P $$" INT
-
-# Start workflow execution
-"""
-            )
-
-            # copy commands
-            commands = False
-            for location in self.active_locations:
-                file = f"./build/target/{BUILD_MODE}/{location.name}"
-                
-                command = location.get_copy_command(file, f"{location.hostname}:{location.workdir}")
-
-                if command:
-                    f.write(f"{command} &\n")
-                    commands = True
-                    
-            if commands:
-                f.write("wait\n")
-
-            f.write("\n\n")
-
-            # execution commands
-            commands = False
-            for location in self.active_locations:
-                command = location.get_command(f"./{location.name}")
-
-                if command:
-                    f.write(f"{command} &\n")
-                    commands = True
-
-            if commands:
-                f.write("wait\n")
-
-            
-        # format the rust code
-
-        # os.system(f"cargo fmt")
+        build_run_script("./run.sh", self.active_locations)
+        build_config_file("./src/config.rs", self.active_locations, self.workflow)
+        build_cargo_file("./Cargo.toml")
 
         # compile the rust code
         release = "--release" if BUILD_MODE == "release" else ""
         os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release}")
 
-    # DONE
     def begin_location(self, location: Location) -> None:
-      build_path = f"{location.name}/"
-
-      # create the location directory
-      os.makedirs(build_path, exist_ok=True)
-
       self.current_location = location
       self.active_locations.append(location)
 
-      # copy the "rust_base" directory to the build path
-      shutil.copytree("/rust_base", build_path, dirs_exist_ok=True)
-      # shutil.copytree("./rust_base", build_path, dirs_exist_ok=True)
+      start_location_file(f"./src/bin/{location.name}.rs", location, self.workflow)
 
-        # create the "src" directory
-      os.makedirs(f"{build_path}src", exist_ok=True)
-
-      # create the cargo.toml file
-      with open(f"{build_path}Cargo.toml", "w") as f:
-        f.write(cargo_toml.replace("[LOCATION_NAME]", location.name))
-
-      # create main.rs file
-      with open(f"{build_path}src/main.rs", "w") as f:
-        f.write(rust_main_start)
-
-        f.write(f"""
-  let amdahline = Arc::new(Amdahline::new("amdahline_{self.current_location.name}.txt".to_string()));
-
-  amdahline.register_executor("{self.current_location.name.upper()}".to_string());
-
-  let workdir = PathBuf::from("{self.current_location.workdir}");
-  """
-        )
-
-        f.write(f"""
-  let communicator = Arc::new(Communicator::new(
-    LocationID::{location.name.upper()},
-    workdir,
-    amdahline.clone()
-  ).await);
-  """
-        );
-
-      # save main.rs file
       self.programs[self.current_location.name] = open(
-          f"{build_path}src/main.rs", "a" 
+          f"./src/bin/{location.name}.rs", "a"
       )
 
     def end_location(self) -> None:
@@ -234,63 +89,9 @@ trap "echo Force termination; pkill -P $$" INT
     """
             )
 
-        self.programs[self.current_location.name].write(f"""
-  amdahline.unregister_executor("{self.current_location.name.upper()}".to_string());
-
-  amdahline.close();
-                                                        
-  println!("{self.current_location.name} finished in {{:?}}", start.elapsed());
-
-    """
-            )
-
-
-        # end the main.rs file
-        self.programs[self.current_location.name].write(rust_main_end)
-
-        locations = "{"
-        for location in self.workflow.locations.values():
-            locations += f"\n  {location.name.upper()},"
-        locations += "\n}"
-
-        ports = "{"
-        for port in self.workflow.ports.values():
-            ports += f"\n  {port.name.upper()},"
-        ports += "\n}"
-
-        addresses = ""
-        i = 0
-        for location in self.workflow.locations.values():
-            addresses += f"    m.insert(LocationID::{location.name.upper()}, \"{location.hostname}:{location.port+i}\".to_string());\n"
-            i += 1
-        
-
-        config_string = f"""
-use std::collections::HashMap;
-
-use lazy_static::lazy_static;
-use serde::{{Deserialize, Serialize}};
-use strum_macros::EnumIter;
-
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, Serialize, Deserialize)]
-pub enum LocationID { locations }
-
-#[derive(Eq, PartialEq, Hash, Debug, Clone, Copy, EnumIter, Serialize, Deserialize)]
-pub enum PortID {ports}
-
-lazy_static! {{
-  pub static ref ADDRESSES: HashMap<LocationID, String> = {{
-    let mut m = HashMap::new();
-{addresses}\t\tm
-  }};
-}}
-        """
-
-        with open(f"{self.current_location.name}/src/config.rs", "w") as f:
-            f.write(config_string)
-
-        # close the main.rs file
         self.programs[self.current_location.name].close()
+
+        close_location_file(f"./src/bin/{self.current_location.name}.rs", self.current_location, self.workflow)
 
     def begin_dataset(
         self,
@@ -365,8 +166,7 @@ lazy_static! {{
 
         self.programs[self.current_location.name].write(
             f"""\n
-    comm::exec(
-      communicator.clone(), // communicator
+    communicator.exec(
       "{step.name}".to_string(), // name
       "{step.display_name}".to_string(), // display name
       vec![ // input ports
@@ -383,13 +183,13 @@ lazy_static! {{
     def recv(self, port: str, data_type: str, src: str, dst: str):
       self.programs[self.current_location.name].write(
           f"""
-    let {self._get_thread(self.current_location.name)} = comm::receive(communicator.clone(), PortID::{port.upper()}, LocationID::{src.upper()}).await;"""
+    let {self._get_thread(self.current_location.name)} = communicator.receive(PortID::{port.upper()}, LocationID::{src.upper()}).await;"""
       )
 
     def send(self, data: str, port: str, data_type: str, src: str, dst: str):
       self.programs[self.current_location.name].write(
           f"""
-    let {self._get_thread(self.current_location.name)} = comm::send(communicator.clone(), PortID::{port.upper()}, LocationID::{dst.upper()}).await;"""
+    let {self._get_thread(self.current_location.name)} = communicator.send(PortID::{port.upper()}, LocationID::{dst.upper()}).await;"""
       )
 
     def seq(self):
@@ -402,7 +202,6 @@ lazy_static! {{
                 """
             )
             self.thread_stacks[self.current_location.name].add_group()
-        #TODO: sequence the steps
         pass
     
     def begin_paren(self) -> None:
@@ -415,7 +214,7 @@ lazy_static! {{
         if self.thread_stacks[self.current_location.name].get_group():
             self.programs[self.current_location.name].write(
                 f"""\n
-    tokio::join!({', '.join(self.thread_stacks[self.current_location.name].delete_group())}); // end parallel step"""
+    tokio::join!({', '.join(self.thread_stacks[self.current_location.name].delete_group())}); // end parenthetized step"""
             )
             self.thread_stacks[self.current_location.name].add_group()
 

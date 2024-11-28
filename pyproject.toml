@@ -43,6 +43,7 @@ packages = [
     "swirlc",
     "swirlc.antlr",
     "swirlc.compiler",
+    "swirlc.compiler.rust",
     "swirlc.config",
     "swirlc.core",
     "swirlc.translator"

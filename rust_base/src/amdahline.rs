@@ -33,6 +33,7 @@ impl Amdahline {
 
     // write to the output file
     self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
+    self.writer.write().unwrap().flush().unwrap();
   }
 
   pub fn unregister_executor(&self, executor_id: String) {
@@ -40,6 +41,7 @@ impl Amdahline {
     let message = format!("[{}] UNREGISTERED <{}>\n", time, executor_id);
 
     self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
+    self.writer.write().unwrap().flush().unwrap();
   }
 
   pub fn begin_task(&self, executor_id: String, task: String) -> uuid::Uuid {
@@ -49,15 +51,9 @@ impl Amdahline {
     let message = format!("[{}] BEGIN <{}> <{}> \"{}\"\n", time, executor_id, uuid, task);
 
     self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
+    self.writer.write().unwrap().flush().unwrap();
 
     uuid
-  }
-
-  pub fn ping_task(&self, executor_id: String, uuid: uuid::Uuid) {
-    let time = chrono::Local::now().format("%H:%M:%S").to_string();
-    let message = format!("[{}] PING <{}> <{}>\n", time, executor_id, uuid);
-
-    self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
   }
 
   pub fn end_task(&self, executor_id: String, uuid: uuid::Uuid) {
@@ -65,5 +61,6 @@ impl Amdahline {
     let message = format!("[{}] END <{}> <{}>\n", time, executor_id, uuid);
 
     self.writer.write().unwrap().write_all(message.as_bytes()).unwrap();
+    self.writer.write().unwrap().flush().unwrap();
   }
 }
