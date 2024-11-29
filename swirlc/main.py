@@ -18,6 +18,7 @@ from swirlc.parser import parser
 def main(args):
     try:
         args = parser.parse_args(args)
+        print(args)
         if args.context == "version":
             from swirlc.version import VERSION
 
@@ -27,7 +28,7 @@ def main(args):
             with open(args.workflow) as f:
                 code = f.read()
             if args.target in swirlc.compiler.targets:
-                target = swirlc.compiler.targets[args.target]()
+                target = swirlc.compiler.targets[args.target](args.out)
                 lexer = SWIRLLexer(antlr4.InputStream(code))
                 tokens = antlr4.CommonTokenStream(lexer)
                 tree = SWIRLParser(tokens).workflow()

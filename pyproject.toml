@@ -52,6 +52,7 @@ zip-safe = true
 
 [tool.setuptools.package-data]
 "swirlc.config" = ["schemas/v1.0/*.json"]
+"swirlc.compiler.rust" = ["lib/*.rs"]
 
 [tool.setuptools.dynamic]
 dependencies = {file = "requirements.txt"}

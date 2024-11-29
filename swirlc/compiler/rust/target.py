@@ -9,6 +9,7 @@ from swirlc.compiler.rust.cargo_file import build_cargo_file
 from swirlc.compiler.rust.config_file import build_config_file
 from swirlc.compiler.rust.run_script import build_run_script
 from swirlc.compiler.rust.location_main import start_location_file, close_location_file
+from swirlc.compiler.rust.rust_lib import build_rust_lib
 from swirlc.core.compiler import BaseCompiler
 from swirlc.core.entity import Location, Step, Port, Workflow, DistributedWorkflow, Data
 from swirlc.version import VERSION
@@ -38,7 +39,7 @@ class ThreadStack:
 
 
 class RustTarget(BaseCompiler):
-    def __init__(self):
+    def __init__(self, output_dir: str) -> None:
         super().__init__()
         self.current_location: Location | None = None
         self.functions = []
@@ -51,6 +52,7 @@ class RustTarget(BaseCompiler):
         self.workflow: DistributedWorkflow | None = None
         self.thread_stacks: MutableMapping[str, ThreadStack] = {}
         self.active_locations: MutableSequence[Location] = []
+        self.output_dir = output_dir
 
     def _get_thread(self, location: str) -> str:
         return self.thread_stacks.setdefault(location, ThreadStack()).add_thread()
@@ -58,27 +60,27 @@ class RustTarget(BaseCompiler):
     def begin_workflow(self, workflow: Workflow) -> None:
         self.workflow = workflow
 
-        shutil.copytree("/rust_base", "./", dirs_exist_ok=True)
+        build_rust_lib(self.output_dir)
 
-        os.makedirs(f"./src/bin", exist_ok=True)
+        os.makedirs(f"{self.output_dir}/src/bin", exist_ok=True)
 
     def end_workflow(self) -> None:
-        build_run_script("./run.sh", self.active_locations)
-        build_config_file("./src/config.rs", self.active_locations, self.workflow)
-        build_cargo_file("./Cargo.toml")
+        build_run_script(f"{self.output_dir}/run.sh", self.active_locations)
+        build_config_file(f"{self.output_dir}/src/config.rs", self.active_locations, self.workflow)
+        build_cargo_file(f"{self.output_dir}/Cargo.toml")
 
         # compile the rust code
         release = "--release" if BUILD_MODE == "release" else ""
-        os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release}")
+        # os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release}")
 
     def begin_location(self, location: Location) -> None:
       self.current_location = location
       self.active_locations.append(location)
 
-      start_location_file(f"./src/bin/{location.name}.rs", location, self.workflow)
+      start_location_file(f"{self.output_dir}/src/bin/{location.name}.rs", location, self.workflow)
 
       self.programs[self.current_location.name] = open(
-          f"./src/bin/{location.name}.rs", "a"
+          f"{self.output_dir}/src/bin/{location.name}.rs", "a"
       )
 
     def end_location(self) -> None:
@@ -91,7 +93,7 @@ class RustTarget(BaseCompiler):
 
         self.programs[self.current_location.name].close()
 
-        close_location_file(f"./src/bin/{self.current_location.name}.rs", self.current_location, self.workflow)
+        close_location_file(f"{self.output_dir}/src/bin/{self.current_location.name}.rs", self.current_location, self.workflow)
 
     def begin_dataset(
         self,

@@ -10,7 +10,6 @@ COPY ./requirements.txt           \
      ./test-requirements.txt      \
      /build/
 COPY swirlc /build/swirlc
-COPY rust_base /build/rust_base
 
 RUN cd build \
     && python -m venv ${VIRTUAL_ENV} \
@@ -43,11 +42,9 @@ ENV RUST_BACKTRACE=1
 ENV PATH="${CARGO_HOME}/bin:${PATH}"
 
 RUN mkdir -p "${CARGO_HOME}" \
-    && chmod -R 777 "${CARGO_HOME}" \
-    && mkdir -p /rust_base \
-    && chmod -R 777 /rust_base
+    && chmod -R 777 "${CARGO_HOME}"
 
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
-COPY --from=builder /build/rust_base /rust_base
+COPY --from=builder /build/swirlc/compiler/rust/lib /opt/swirlc/lib/python3.12/site-packages/swirlc/compiler/rust/lib
 
 CMD ["/bin/sh"]
