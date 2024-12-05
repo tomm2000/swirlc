@@ -5,14 +5,15 @@ from swirlc.core.entity import Location
 from swirlc.version import VERSION
 
 
-def build_run_script(file, locations: MutableSequence[Location]):
-  nnodes_str = len(locations)
+def build_run_script(file, locations: MutableSequence[Location], env: str, build_mode: str, output_dir: str):
 
-  locations_str = ' '.join([f'"{loc.name}"' for loc in locations])
+  if env == "apptainer":
+    nnodes_str = len(locations)
+    locations_str = ' '.join([f'"{loc.name}"' for loc in locations])
 
-  with open(file, 'w') as f:
-    f.write(
-f'''#!/bin/bash
+    with open(file, 'w') as f:
+      f.write(
+  f'''#!/bin/bash
 
 # This file was generated automatically using SWIRL v{VERSION},
 # using command swirlc {' '.join(sys.argv[1:])}
@@ -60,5 +61,48 @@ while read -r location; do
 done < location_map.txt
 
 wait
-    ''')
+      ''')
+  elif env == "docker":
 
+
+
+    with open(file, 'w') as f:
+      copy_commands_str = ""
+      for location in locations:
+        file = f"./build/target/{build_mode}/{location.name}"
+        command = location.get_copy_command(file, f"{output_dir}/{location.hostname}:{location.workdir}")
+
+        if command:
+          copy_commands_str += f"{command} &\n"
+
+      execution_commands_str = ""
+      for location in locations:
+        command = location.get_command(f"./{location.name}")
+
+        if command:
+          execution_commands_str += f"{command} &\n"
+
+      
+
+
+      f.write(
+  f'''#!/bin/bash
+
+# This file was generated automatically using SWIRL v{VERSION},
+# using command swirlc {' '.join(sys.argv[1:])}
+
+trap "echo Force termination; pkill -P $$" INT
+
+# Start workflow execution
+
+{copy_commands_str}
+
+wait
+
+{execution_commands_str}
+
+wait
+''')
+
+  else:
+    raise Exception(f"Environment `{env}` not supported")

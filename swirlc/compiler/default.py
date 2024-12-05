@@ -264,7 +264,7 @@ class ThreadStack:
 
 
 class DefaultTarget(BaseCompiler):
-    def __init__(self, output_dir: str):
+    def __init__(self, output_dir: str, env: str):
         super().__init__()
         self.current_location: Location | None = None
         self.functions = []
@@ -421,7 +421,7 @@ if __name__ == '__main__':
         script_name = f"{self.output_dir}/run.sh"
         copy_traces = " &\n".join(
             [
-                loc.get_copy_command(f"{loc.name}.py", f"{loc.hostname}:{loc.workdir}")
+                loc.get_copy_command(f"{self.output_dir}/{loc.name}.py", f"{loc.hostname}:{loc.workdir}")
                 for loc in self.workflow.locations.values()
                 if loc.get_copy_command(
                     f"{loc.name}.py", f"{loc.hostname}:{loc.workdir}"

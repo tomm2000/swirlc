@@ -4,6 +4,10 @@ from swirlc.version import VERSION
 
 
 def start_location_file(file, location: Location, workflow: DistributedWorkflow):
+    workdir = location.workdir
+
+    workdir = workdir.replace("\\", "\\\\")
+
     with open(file, "w") as f:
         f.write(
 f"""// ===========================================
@@ -23,7 +27,7 @@ pub async fn main() {{
   let amdahline = Arc::new(Amdahline::new("amdahline_{location.name}.txt".to_string()));
   amdahline.register_executor("{location.name.upper()}".to_string());
 
-  let workdir = PathBuf::from("{location.workdir}");
+  let workdir = PathBuf::from("{workdir}");
 
   let communicator = Arc::new(Communicator::new(
     LocationID::{location.name.upper()},
@@ -35,18 +39,15 @@ pub async fn main() {{
         
 def close_location_file(file, location: Location, workflow: DistributedWorkflow):
     with open(file, "a") as f:
-#         f.write(
-# f"""
-# end of location {location.name}
-# """)
-        
         f.write(
-f"""
+f"""\n
   communicator.close_connections();
   
   amdahline.unregister_executor("{location.name.upper()}".to_string());
   amdahline.close();
   
   println!("{location.name} finished in {{:?}}", start.elapsed());
+
+//  ===================== end of location {location.name} =====================
 }}
 """)

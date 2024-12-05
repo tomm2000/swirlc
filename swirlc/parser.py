@@ -36,6 +36,13 @@ compile_parser.add_argument(
     default="build",
     help="The output directory where the compiled program will be stored",
 )
+compile_parser.add_argument(
+    "--env",
+    "-e",
+    type=str,
+    default="apptainer",
+    help="The environment to use for execution",
+)
 
 # Swirl translator
 translate_parser = subparsers.add_parser(

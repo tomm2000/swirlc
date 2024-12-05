@@ -56,10 +56,16 @@ class DAXTranslator(AbstractTranslator):
             raise Exception(
                 f"Missing files in the directory {dax_directory}: {missing_files}"
             )
+
         self.replicas_path: Path = glob_result["replicas"]
         self.sites_path: Path = glob_result["sites"]
         self.transformations_path: Path = glob_result["transformations"]
         self.workflow_path: Path = glob_result["workflow"]
+
+        # self.replicas_path: Path = glob_result["workflow"]
+        # self.sites_path: Path = glob_result["workflow"]
+        # self.transformations_path: Path = glob_result["workflow"]
+        # self.workflow_path: Path = glob_result["workflow"]
 
     def _translate(self) -> Workflow:
         # Dax-Pegasus notation:
