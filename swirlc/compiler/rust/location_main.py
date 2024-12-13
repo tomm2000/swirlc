@@ -6,7 +6,10 @@ from swirlc.version import VERSION
 def start_location_file(file, location: Location, workflow: DistributedWorkflow):
     workdir = location.workdir
 
-    workdir = workdir.replace("\\", "\\\\")
+    try:
+        workdir = workdir.replace("\\", "\\\\")
+    except:
+        workdir = "./"
 
     with open(file, "w") as f:
         f.write(
@@ -24,7 +27,7 @@ pub async fn main() {{
   let start = std::time::Instant::now();
   let addresses = Addresses::from_address_map_file("location_map.txt");
 
-  let amdahline = Arc::new(Amdahline::new("amdahline_{location.name}.txt".to_string()));
+  let amdahline = Arc::new(Amdahline::new("amdahline/{location.name}.txt".to_string()));
   amdahline.register_executor("{location.name.upper()}".to_string());
 
   let workdir = PathBuf::from("{workdir}");

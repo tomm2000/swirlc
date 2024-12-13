@@ -304,6 +304,8 @@ class DefaultTarget(BaseCompiler):
         location = self.workflow.locations[self.current_location.name]
         self.programs[self.current_location.name].write(
             f"""def main():
+    _init_locations()
+
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.bind(locations["{location.name}"])
     sock.settimeout(3)
@@ -342,42 +344,60 @@ class DefaultTarget(BaseCompiler):
     global stopping
     stopping = True"""
         )
-        locations = ",\n".join(
-            [
-                f"\t'{name}': ('{location.hostname}', {location.port})"
-                for name, location in self.workflow.locations.items()
-            ]
-        )
-        self.programs[self.current_location.name].write(
-            f"""
-locations = {{
-{locations}
-}}
-"""
-        )
+#         locations = ",\n".join(
+#             [
+#                 f"\t'{name}': ('{location.hostname}', {location.port})"
+#                 for name, location in self.workflow.locations.items()
+#             ]
+#         )
+#         self.programs[self.current_location.name].write(
+#             f"""
+# locations = {{
+# {locations}
+# }}
+# """
+        # )
+
+
+
+
         self.programs[self.current_location.name].write(
             """
+locations = {}
+
+def _init_locations():
+    # open the location_map.txt file
+    with open("location_map.txt") as f:
+        # read the lines
+        lines = f.readlines()
+        # iterate over the lines
+        for line in lines:
+            # split the line by comma
+            location, host = line.strip().split(",")
+            address, port = host.split(":")
+            locations[location] = (address, int(port))
+
 if __name__ == '__main__':
     main()
 """
         )
         self.programs[self.current_location.name].close()
 
-        try:
-            import black
+        # try:
+        #     import black
 
-            black.format_file_in_place(
-                Path(f"{self.output_dir}/{self.current_location.name}.py"),
-                fast=False,
-                mode=black.mode.Mode(
-                    target_versions={black.mode.TargetVersion.PY38}, line_length=88
-                ),
-                write_back=WriteBack.YES,
-            )
-        except ImportError:
-            logger.warning(
-                "`black` package not found. Install black to obtain pretty-printed output files."
-            )
+        #     black.format_file_in_place(
+        #         Path(f"{self.output_dir}/{self.current_location.name}.py"),
+        #         fast=False,
+        #         mode=black.mode.Mode(
+        #             target_versions={black.mode.TargetVersion.PY38}, line_length=88
+        #         ),
+        #         write_back=WriteBack.YES,
+        #     )
+        # except ImportError:
+        #     logger.warning(
+        #         "`black` package not found. Install black to obtain pretty-printed output files."
+        #     )
 
         self.current_location = None
 
