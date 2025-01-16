@@ -1,11 +1,11 @@
-pub mod comm;
+pub mod swirl;
 pub mod config;
-pub mod l1;
-pub mod ld;
-pub mod utils;
+pub mod locations;
+pub mod orchestra;
 pub mod amdahline;
 
 use clap::Parser;
+use tokio::{process::Child, task::JoinSet};
 
 /// Simple program to greet a person
 #[derive(Parser, Debug)]
@@ -17,14 +17,18 @@ struct Args {
 }
 
 #[tokio::main]
-pub async fn main() {
-  let args = Args::parse();
+async fn main() {
+  let address_map = orchestra::utils::addresses_from_config_file("address_map.txt");
+  let mut join_set = JoinSet::new();
 
-  let loc = args.loc;
-
-  match loc.as_str() {
-    "l1" => l1::run().await,
-    "ld" => ld::run().await,
-    _ => panic!("Invalid location")
+  for (location, _) in address_map.clone() {
+    println!("{} ", location);
+    match location.as_str() {
+      "location0" => join_set.spawn(locations::location0::location0("location0".to_string(), address_map.clone())),
+      "location1" => join_set.spawn(locations::location1::location1("location1".to_string(), address_map.clone())),
+      _ => panic!("Invalid location: {}", location)
+    };
   }
+
+  join_set.join_all().await;
 }

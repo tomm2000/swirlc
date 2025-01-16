@@ -1,7 +1,7 @@
 use crate::{
   amdahline::Amdahline,
   config::{Addresses, LocationID, PortID},
-  utils::{data_size, debug_prelude},
+  orchestra::utils::{data_size, debug_prelude},
 };
 use serde::{Deserialize, Serialize};
 use std::{

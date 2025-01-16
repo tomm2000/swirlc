@@ -1,0 +1,2 @@
+location0,machine1,localhost:8080
+location1,machine2,localhost:8081
