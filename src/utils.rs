@@ -1,6 +1,4 @@
-
-
-
+use crate::config::LocationID;
 
 pub fn data_size(size: usize) -> String {
   let kb = 1024;
@@ -19,4 +17,16 @@ pub fn data_size(size: usize) -> String {
   } else {
     format!("{:.2} TB", size as f64 / tb as f64)
   }
+}
+
+pub fn debug_prelude(location: &LocationID, steap_name: Option<&String>) -> String {
+  // [HH:MM:SS] [location] [step_name] >>>
+  let time = chrono::Local::now().format("%H:%M:%S").to_string();
+  let location = format!("{:?}", location);
+  let step_name = match steap_name {
+    Some(step_name) => format!(" [{}]", step_name),
+    None => "".to_string(),
+  };
+
+  format!("[{}] [{}]{} >>> ", time, location, step_name)
 }

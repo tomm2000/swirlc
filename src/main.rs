@@ -1,4 +1,3 @@
-
 pub mod comm;
 pub mod config;
 pub mod l1;
@@ -6,16 +5,26 @@ pub mod ld;
 pub mod utils;
 pub mod amdahline;
 
+use clap::Parser;
+
+/// Simple program to greet a person
+#[derive(Parser, Debug)]
+#[command(version, about, long_about = None)]
+struct Args {
+  // Location
+  #[arg(short, long)]
+  loc: String,
+}
+
 #[tokio::main]
 pub async fn main() {
-  // cargo run -- --loc=l1
+  let args = Args::parse();
 
-  let args: Vec<String> = std::env::args().collect();
-  let loc = args[1].clone();
+  let loc = args.loc;
 
   match loc.as_str() {
-    "--loc=l1" => l1::run().await,
-    "--loc=ld" => ld::run().await,
+    "l1" => l1::run().await,
+    "ld" => ld::run().await,
     _ => panic!("Invalid location")
   }
 }
