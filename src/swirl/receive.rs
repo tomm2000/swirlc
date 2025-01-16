@@ -28,11 +28,11 @@ impl Swirl {
       .await;
 
     join_set.spawn(async move {
-      let (header, mut reader) = orchestra.blocking_receive_stream(sender, port_id.clone()).await;
+      let received = orchestra.receive_blocking(sender, port_id.clone()).await;
       
-      println!("Received stream from {}", sender);
+      println!("Received from {}", sender);
 
-      let received_port: PortData = bincode::deserialize(&header.header_data).expect("failed to deserialize header data");
+      let received_port: PortData = bincode::deserialize(&received.header.header_data).expect("failed to deserialize header data");
   
       let port_data = swirl.ports.get(&port_id).expect("port not found");
   
@@ -43,15 +43,15 @@ impl Swirl {
         PortData::File(file_path) => {
           let path = swirl.workdir.join(format!("receive_{}", orchestra.location_name(orchestra.location)));
           std::fs::create_dir_all(&path).expect(format!("failed to create directory {:?}", &path).as_str());
-          let file_path = path.join(file_path);
+          let full_path = path.join(&file_path);
+
+          println!("receiving file into: {:?}", full_path);
+          
+          let file = tokio::fs::File::create(&full_path).await.expect(format!("failed to create file: {:?}", &full_path).as_str());
+          let writer = tokio::io::BufWriter::new(file);
+          received.receive_blocking_into(writer).await;
 
           println!("received file: {:?}", file_path);
-          
-          let mut file = tokio::fs::File::create(&file_path).await.expect(format!("failed to create file: {:?}", &file_path).as_str());
-  
-          tokio::io::copy(&mut reader, &mut file)
-            .await
-            .expect("failed to write file data");
         }
         _ => { }
       }

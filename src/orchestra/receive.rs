@@ -9,37 +9,56 @@ use tokio::{
   task::{JoinHandle, JoinSet},
 };
 
-impl Orchestra {
-  pub async fn receive_stream(
-    self: &Arc<Self>,
-    sender: LocationID,
-    message_id: String,
-  ) -> JoinHandle<(MessageHeader, BufReader<TcpStream>)> {
-    let orchestra = self.clone();
-    
-    let handle: JoinHandle<(MessageHeader, BufReader<TcpStream>)> = tokio::spawn(async move {
-      orchestra.blocking_receive_stream(sender, message_id).await
-    });
+pub struct PartialReceive {
+  pub header: MessageHeader,
+  pub reader: BufReader<TcpStream>,
+  orchestra: Arc<Orchestra>,
+}
 
-    handle
+impl PartialReceive {
+  pub async fn receive_blocking_into<W>(mut self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
+    match self.header.relay_tag.clone() {
+      RelayTag::Data() => {
+        tokio::io::copy(&mut self.reader, &mut writer)
+          .await
+          .expect("failed to read message data");
+      }
+      RelayTag::Relay(relay_instructions) => {
+        let writer = self.orchestra
+          .blocking_broadcast_relay(
+            relay_instructions,
+            self.header.message_id.clone(),
+            self.reader,
+            Bytes::from(self.header.header_data.clone()),
+            self.header.size,
+            self.header.origin,
+            writer,
+          ).await;
+
+        return writer;
+      }
+    }
+
+    return writer;
   }
 
-  pub async fn receive_stream_joinset(
-    self: &Arc<Self>,
-    sender: LocationID,
-    message_id: String,
-    mut join_set: JoinSet<(MessageHeader, BufReader<TcpStream>)>,
-  ) -> JoinSet<(MessageHeader, BufReader<TcpStream>)> {
-    let orchestra = self.clone();
+  pub async fn receive_into<W>(self, writer: W) -> JoinHandle<W> where W: AsyncWrite + Unpin + Send + 'static {
+    tokio::spawn(async move {
+      self.receive_blocking_into(writer).await
+    })
+  }
 
+  pub async fn receive_joinset_into<W>(self, writer: W, mut join_set: JoinSet<W>) -> JoinSet<W> where W: AsyncWrite + Unpin + Send + 'static {
     join_set.spawn(async move {
-      orchestra.blocking_receive_stream(sender, message_id).await
+      self.receive_blocking_into(writer).await
     });
 
     join_set
   }
+}
 
-  pub async fn blocking_receive_stream(
+impl Orchestra {
+  async fn collect_message(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
@@ -65,85 +84,62 @@ impl Orchestra {
     }
   }
 
-
-  pub async fn blocking_receive_into<W>(
+  pub async fn receive_blocking(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
-    mut writer: W,
-  ) -> (W, Bytes)
-  where
-    W: AsyncWrite + Unpin + Send + 'static,
-  {
-    let (header, mut reader) = self.blocking_receive_stream(sender, message_id.clone()).await;
+  ) -> PartialReceive {
+    let (header, reader) = self.collect_message(sender, message_id).await;
 
-    let header_data = Bytes::from(header.header_data);
-
-    match header.relay_tag {
-      RelayTag::Data() => {
-        tokio::io::copy(&mut reader, &mut writer)
-          .await
-          .expect("failed to read message data");
-
-        (writer, header_data)
-      }
-      RelayTag::Relay(relay_instructions) => {
-        let writer = self
-          .blocking_broadcast_relay(
-            relay_instructions,
-            message_id,
-            reader,
-            header_data.clone(),
-            header.size,
-            header.origin,
-            Some(writer),
-          )
-          .await;
-
-        (writer.unwrap(), header_data)
-      }
-    }
+    PartialReceive { header, reader, orchestra: self.clone() }
   }
 
-  pub async fn receive_into<W>(
+  pub fn receive(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
-    writer: W,
-  ) -> JoinHandle<(W, Bytes)>
-  where
-    W: AsyncWrite + Unpin + Send + 'static,
-  {
+  ) -> JoinHandle<PartialReceive> {
     let orchestra = self.clone();
 
-    let handle = tokio::spawn(async move {
-      orchestra.blocking_receive_into(sender, message_id, writer).await
-    });
-
-    handle
+    tokio::spawn(async move {
+      orchestra.receive_blocking(sender, message_id).await
+    })
   }
 
-
-  pub async fn receive_into_joinset<W>(
+  pub fn receive_joinset(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
-    writer: W,
-    mut join_set: JoinSet<(W, Bytes)>,
-  ) -> JoinSet<(W, Bytes)>
-  where
-    W: AsyncWrite + Unpin + Send + 'static,
-  {
+    mut join_set: JoinSet<PartialReceive>,
+  ) -> JoinSet<PartialReceive> {
     let orchestra = self.clone();
 
     join_set.spawn(async move {
-      orchestra.blocking_receive_into(sender, message_id, writer).await
+      orchestra.receive_blocking(sender, message_id).await
     });
 
     join_set
   }
 
+  // pub async fn receive(
+  //   self: &Arc<Self>,
+  //   sender: LocationID,
+  //   message_id: String,
+  // ) -> PartialReceive {
+  //   let (header, reader) = self.collect_message(sender, message_id).await;
 
+  //   PartialReceive { header, reader, orchestra: self.clone() }
+  // }
+
+  // pub async fn receive_joinset(
+  //   self: &Arc<Self>,
+  //   sender: LocationID,
+  //   message_id: String,
+  // ) -> PartialReceive {
+  //   let (header, reader) = self.collect_message(sender, message_id).await;
+
+  //   PartialReceive { header, reader, orchestra: self.clone() }
+  // }
 
   // pub async fn receive_into<W>(
   //   &self,

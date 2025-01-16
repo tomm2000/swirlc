@@ -23,7 +23,13 @@ pub async fn location0(location: String, address_map: HashMap<String, LocationIn
     ]
   ).await;
 
-  let join_set = swirl.send("p1".into(), "location1".into(), join_set).await;
+  // let join_set = swirl.send("p1".into(), "location1".into(), join_set).await;
+
+  let join_set = swirl.broadcast(
+    "p1".into(),
+    vec!["location1".into(), "location2".into()],
+    join_set
+  ).await;
 
   join_set.join_all().await;
 
