@@ -7,14 +7,15 @@ def build_cargo_file(file):
 name = "swirlc-rust"
 version = "{VERSION}"
 edition = "2021"
-
+''' + '''
 [dependencies]
-serde = {{ version = "1.0.214", features = ["derive"] }}
-chrono = "0.4"
-tokio = {{ version = "1.41.0", features = ["full"]}}
+serde = { version = "1.0.214", features = ["derive"] }
+chrono = "0.4.39"
+tokio = { version = "1.42.0", features = ["full"]}
 bincode = "1.3.3"
 strum = "0.26.3"
 strum_macros = "0.26"
 glob = "0.3.1"
-uuid = {{ version = "1.11.0", features = ["v4"] }}
-        ''')
+uuid = { version = "1.11.0", features = ["v4"] }
+''')
+

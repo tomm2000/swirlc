@@ -32,12 +32,12 @@ pub async fn main() {{
 
   let workdir = PathBuf::from("{workdir}");
 
-  let communicator = Arc::new(Communicator::new(
+  let communicator = Communicator::new(
     LocationID::{location.name.upper()},
     workdir,
     amdahline.clone(),
     addresses
-  ).await);
+  ).await;
 """)
         
 def close_location_file(file, location: Location, workflow: DistributedWorkflow):

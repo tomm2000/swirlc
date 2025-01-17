@@ -26,6 +26,8 @@ class SchemaTarget(BaseCompiler):
         self.group_stack: MutableSequence[Group] = []
         self.group_counter = 0
 
+        self.broadcast_stack: list[(str, str)] = []
+
     def get_indent(self) -> str:
         return "  " * (len(self.group_stack) - 1)
 

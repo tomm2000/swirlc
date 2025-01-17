@@ -67,6 +67,7 @@ class RustTarget(BaseCompiler):
         self.active_locations: MutableSequence[Location] = []
 
         self.group_stack: GroupStack = GroupStack()
+        self.broadcast_stack: dict[str, list[str]] = defaultdict(list)
 
     def get_indent(self, mod = 0) -> str:
         return "  " * (self.group_stack.depth() + mod)
@@ -95,7 +96,7 @@ class RustTarget(BaseCompiler):
         if threads:
             program.write(
                 f"""\n\n{self.get_indent()}tokio::join!({threads});""")
-
+            
     
     def begin_workflow(self, workflow: Workflow) -> None:
         self.workflow = workflow
@@ -110,11 +111,11 @@ class RustTarget(BaseCompiler):
         build_cargo_file(f"{self.output_dir}/Cargo.toml")
 
         # compile the rust code
-        release = "--release" if BUILD_MODE == "release" else ""
-        current_dir = os.getcwd()
-        os.chdir(self.output_dir)
-        os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release}")
-        os.chdir(current_dir)
+        # release = "--release" if BUILD_MODE == "release" else ""
+        # current_dir = os.getcwd()
+        # os.chdir(self.output_dir)
+        # os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release} --timings")
+        # os.chdir(current_dir)
 
     def begin_location(self, location: Location) -> None:
         self.group_stack = GroupStack()
@@ -264,16 +265,43 @@ class RustTarget(BaseCompiler):
 {self.get_indent()}let {thread_name} = communicator.send(PortID::{port.upper()}, LocationID::{dst.upper()}).await;"""
         )
 
+        # self.broadcast_stack[port].append(dst)
+
+    def empty_broadcast_stack(self):
+        if len(self.broadcast_stack) == 0:
+            return
+
+        program = self.programs[self.current_location.name]
+        group = self.group_stack.top()
+
+        for port in self.broadcast_stack:
+            thread_name = self.get_thread_name("broadcast")
+            group.add_thread(thread_name)
+
+            destinations_str = ""
+            for destination in self.broadcast_stack[port]:
+                destinations_str += f"\n{self.get_indent(1)}LocationID::{destination.upper()},"
+            destinations_str = destinations_str[:-1]
+            destinations_str = f"vec![{destinations_str}\n{self.get_indent()}]"
+
+            program.write(
+                f"""
+{self.get_indent()}let {thread_name} = communicator.broadcast(PortID::{port.upper()}, {destinations_str}).await;
+                """
+            )
+
     def seq(self):
         program = self.programs[self.current_location.name]
         group = self.group_stack.top()
 
-        
+        self.empty_broadcast_stack()
         self.empty_group_thread_stack()
         program.write(f"""
 //  ===================== sequential step (follows) =====================""")
     
     def begin_paren(self) -> None:
+        self.empty_broadcast_stack()
+
         program = self.programs[self.current_location.name]
         group = self.group_stack.top()
         thread_name = self.get_thread_name("group")
@@ -289,6 +317,8 @@ class RustTarget(BaseCompiler):
         )
 
     def end_paren(self):
+        self.empty_broadcast_stack()
+
         program = self.programs[self.current_location.name]
 
         # wait for the remaining threads in the current group
