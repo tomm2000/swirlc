@@ -45,6 +45,6 @@ RUN mkdir -p "${CARGO_HOME}" \
     && chmod -R 777 "${CARGO_HOME}"
 
 COPY --from=builder ${VIRTUAL_ENV} ${VIRTUAL_ENV}
-COPY --from=builder /build/swirlc/compiler/rust/lib /opt/swirlc/lib/python3.12/site-packages/swirlc/compiler/rust/lib
+COPY --from=builder /build/swirlc/compiler/rust/src /opt/swirlc/lib/python3.12/site-packages/swirlc/compiler/rust/src
 
 CMD ["/bin/sh"]

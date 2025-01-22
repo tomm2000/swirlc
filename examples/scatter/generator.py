@@ -22,7 +22,7 @@ config_file.write(f"""\n
 dependencies:
   d1:
     type: file
-    value: /data/world.txt
+    value: /data/message.txt
     """) 
 
 # source.swirl ==================

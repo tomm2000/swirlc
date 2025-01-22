@@ -39,7 +39,7 @@ nodes=$(scontrol show hostnames $SLURM_NODELIST)
 nodes=($nodes)
 
 # Clear or create location map file
-> location_map.txt
+> address_map.txt
 
 # clear the workdir
 rm -rf ~/.swirl/workdir/*
@@ -59,7 +59,7 @@ for ((i=0; i < num_locations; i++)); do
   port=$((8080 + i / num_nodes))
   
   # Assign location to node and write to location map
-  echo "${{locations[$i]}},${{nodes[$node_index]}}:$port" >> location_map.txt
+  echo "${{locations[$i]}},${{nodes[$node_index]}},${{nodes[$node_index]}}:$port" >> address_map.txt
   echo "Assigned ${{locations[$i]}} to ${{nodes[$node_index]}}"
 done
 
@@ -79,7 +79,7 @@ for ((i=0; i < num_locations; i++)); do
     --bind ~/.swirl/workdir:/workdir \\
     --bind ~/data:/data \\
     docker://mul8/1000genome-swirlc \\
-    ./target/release/$loc &
+    ./swirlc-rust --loc=$loc &
 done
 
 wait

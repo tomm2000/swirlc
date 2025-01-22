@@ -1,11 +1,11 @@
+chmod 777 build
 rm -rf build
 mkdir -p build
-chmod 777 build
 
 docker run                                        \
         --platform linux/x86_64                   \
         -u $(id -u):$(id -g)                      \
-        -v $(pwd)/examples/scatter:/data          \
+        -v $(pwd)/examples/1000genome:/data          \
         -v $(pwd)/build:/build                    \
         -w /                                      \
         swirlc-rust                               \
@@ -41,10 +41,10 @@ zip -g build.zip run.sh
 cd ..
 
 # create the folder on the server
-ssh tommaso.fogliobonda@c3sfr1.di.unito.it "mkdir -p ~/swirlc-1000-genome/orchestra"
+ssh tommaso.fogliobonda@c3sfr1.di.unito.it "mkdir -p ~/swirlc-1000-genome/genome"
 
 # send the zip to c3sfr1.di.unito.it using scp
-scp build/build.zip tommaso.fogliobonda@c3sfr1.di.unito.it:~/swirlc-1000-genome/orchestra/build.zip
+scp build/build.zip tommaso.fogliobonda@c3sfr1.di.unito.it:~/swirlc-1000-genome/genome/build.zip
 
 # unzip the file on the server
-ssh tommaso.fogliobonda@c3sfr1.di.unito.it "cd ~/swirlc-1000-genome/orchestra/ && unzip -o build.zip && rm build.zip"
+ssh tommaso.fogliobonda@c3sfr1.di.unito.it "cd ~/swirlc-1000-genome/genome/ && unzip -o build.zip && rm build.zip"

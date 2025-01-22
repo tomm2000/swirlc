@@ -11,48 +11,36 @@ from swirlc.compiler.rust.cargo_file import build_cargo_file
 from swirlc.compiler.rust.config_file import build_config_file
 from swirlc.compiler.rust.run_script import build_run_script
 from swirlc.compiler.rust.location_main import start_location_file, close_location_file
-from swirlc.compiler.rust.rust_lib import build_rust_lib
+from swirlc.compiler.rust.rust_lib import build_locations_module, build_main_file, build_rust_lib
 from swirlc.core.compiler import BaseCompiler
 from swirlc.core.entity import Location, Step, Port, Workflow, DistributedWorkflow, Data
 from swirlc.version import VERSION
 
-BUILD_MODE = "release"
+# "release" | "debug" | "none"
+BUILD_MODE = "none"
+ENABLE_BROADCAST = True
 
-class Group:
+class ThreadStack:
     def __init__(self) -> None:
-        self.thread_stack = []
-        self.thread_counter = 0
-        self.group_id = 0
-        self.function_name = ""
+        self.stack: MutableSequence[int] = []
 
-    def add_thread(self, thread: str) -> None:
-        self.thread_stack.append(thread)
-        self.thread_counter += 1
-
-    def empty_thread_stack(self) -> None:
-        self.thread_stack = []
-
-class GroupStack:
-    def __init__(self) -> None:
-        self.stack: list[Group] = []
-        self.counter = 0
-
-    def push(self) -> Group:
-        group = Group()
-        group.group_id = self.counter - 1
-        self.stack.append(group)
-        self.counter += 1
-        return group
-    
-    def pop(self) -> Group:
-        return self.stack.pop()
-    
-    def top(self) -> Group:
+    def top(self) -> int:
         return self.stack[-1]
 
-    def depth(self) -> int:
-        return len(self.stack)
+    def add_thread(self) -> None:
+        self.stack[-1] += 1
 
+    def add_group(self) -> None:
+        self.stack.append(0)
+
+    def pop_group(self) -> int:
+        return self.stack.pop()
+    
+    def clear_group(self) -> None:
+        self.stack[-1] = 0
+    
+    def len(self) -> int:
+        return len(self.stack)
 
 class RustTarget(BaseCompiler):
     def __init__(self, output_dir: str, env: str) -> None:
@@ -66,85 +54,84 @@ class RustTarget(BaseCompiler):
         self.current_location: Location | None = None
         self.active_locations: MutableSequence[Location] = []
 
-        self.group_stack: GroupStack = GroupStack()
         self.broadcast_stack: dict[str, list[str]] = defaultdict(list)
+        self.thread_stack: ThreadStack = ThreadStack()
 
     def get_indent(self, mod = 0) -> str:
-        return "  " * (self.group_stack.depth() + mod)
-
-    def get_thread_name(self, type: str = "task") -> str:
-        name = type
-        i = 0
-        for group in self.group_stack.stack:
-            # if its the last group
-            if i == len(self.group_stack.stack) - 1:
-                name += "_" + str(group.thread_counter)
-            else:
-                name += "_" + str(group.thread_counter - 1)
-
-            i+=1
-        return name
-
-    def empty_group_thread_stack(self) -> None:
-        group = self.group_stack.top()
-
-        threads = ", ".join([f"{thread}" for thread in group.thread_stack])
-        program = self.programs[self.current_location.name]
-        
-        group.empty_thread_stack()
-
-        if threads:
-            program.write(
-                f"""\n\n{self.get_indent()}tokio::join!({threads});""")
-            
+        return "  " * (self.thread_stack.len() + mod)
     
     def begin_workflow(self, workflow: Workflow) -> None:
         self.workflow = workflow
 
+        # remove the build directory if it exists
+        # if os.path.exists(f"{self.output_dir}"):
+        #     shutil.rmtree(f"{self.output_dir}")
+
         build_rust_lib(self.output_dir)
 
-        os.makedirs(f"{self.output_dir}/src/bin", exist_ok=True)
+        os.makedirs(f"{self.output_dir}/src/locations", exist_ok=True)
 
     def end_workflow(self) -> None:
         build_run_script(f"{self.output_dir}/run.sh", self.active_locations, self.env, BUILD_MODE, self.output_dir)
-        build_config_file(f"{self.output_dir}/src/config.rs", self.active_locations, self.workflow)
+        build_config_file(f"{self.output_dir}/src/swirl/config.rs", self.active_locations, self.workflow)
         build_cargo_file(f"{self.output_dir}/Cargo.toml")
+        build_main_file(self.output_dir, self.active_locations)
+        build_locations_module(self.output_dir, self.active_locations)
 
-        # compile the rust code
-        # release = "--release" if BUILD_MODE == "release" else ""
-        # current_dir = os.getcwd()
-        # os.chdir(self.output_dir)
-        # os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release} --timings")
-        # os.chdir(current_dir)
+        if BUILD_MODE != "none":
+            # compile the rust code
+            release = "--release" if BUILD_MODE == "release" else ""
+            current_dir = os.getcwd()
+            os.chdir(self.output_dir)
+            os.system(f"RUSTFLAGS=\"-Awarnings\" cargo build {release} --timings")
+            os.chdir(current_dir)
 
     def begin_location(self, location: Location) -> None:
-        self.group_stack = GroupStack()
-
         self.current_location = location
         self.active_locations.append(location)
 
-        start_location_file(f"{self.output_dir}/src/bin/{location.name}.rs", location, self.workflow)
+        start_location_file(f"{self.output_dir}/src/locations/{location.name}.rs", location, self.workflow)
 
         self.programs[self.current_location.name] = open(
-            f"{self.output_dir}/src/bin/{location.name}.rs", "a"
+            f"{self.output_dir}/src/locations/{location.name}.rs", "a"
         )
 
         # create the main group
-        self.group_stack.push()
+        self.thread_stack.add_group()
 
     def end_location(self) -> None:
         # assert that there is only 1 group left (the main group)
-        assert self.group_stack.depth() == 1
+        assert self.thread_stack.len() == 1
 
-        self.empty_group_thread_stack()
+        self.wait_thread_group()
+        self.thread_stack.pop_group()
 
-        self.group_stack.pop()
         program = self.programs[self.current_location.name]
         program.close()
 
-        close_location_file(f"{self.output_dir}/src/bin/{self.current_location.name}.rs", self.current_location, self.workflow)
-        
+        close_location_file(f"{self.output_dir}/src/locations/{self.current_location.name}.rs", self.current_location, self.workflow)
     
+
+    def wait_thread_group(self) -> None:
+        if self.thread_stack.top() == 0:
+            return
+        
+        self.thread_stack.clear_group()
+        self.programs[self.current_location.name].write(
+f"""
+{self.get_indent()}join_set.join_all().await;
+"""
+        )
+
+    def refresh_join_set(self) -> None:
+        if self.thread_stack.top() == 0:
+            self.programs[self.current_location.name].write(
+                f"""
+{self.get_indent()}let mut join_set = JoinSet::new();
+"""
+            )
+                      
+
     def begin_dataset(
         self,
         dataset: MutableSequence[tuple[str, Data]],
@@ -153,24 +140,24 @@ class RustTarget(BaseCompiler):
             self.current_location.data[data.name] = data
             if data.type == "file":
                 self.programs[self.current_location.name].write(f"""
-{self.get_indent()}communicator.init_port(PortID::{port_name.upper()}, PortData::File("{data.value}".to_string())).await;"""
+{self.get_indent()}swirl.init_port("{port_name}".into(), PortData::File("{data.value}".to_string())).await;"""
                 )
 
             elif data.type == "string":
                 self.programs[self.current_location.name].write(f"""
-{self.get_indent()}communicator.init_port(PortID::{port_name.upper()}, PortData::String("{data.value}".to_string())).await;
+{self.get_indent()}communicator.init_port("{port_name}".into(), PortData::String("{data.value}".to_string())).await;
   """
                 )
 
             elif data.type == "int":
                 self.programs[self.current_location.name].write(f"""
-{self.get_indent()}communicator.init_port(PortID::{port_name.upper()}, PortData::Int({data.value})).await;
+{self.get_indent()}communicator.init_port("{port_name}".into(), PortData::Int({data.value})).await;
   """
                 )
 
             elif data.type == "bool":
                 self.programs[self.current_location.name].write(f"""
-{self.get_indent()}communicator.init_port(PortID::{port_name.upper()}, PortData::Bool({data.value})).await;
+{self.get_indent()}communicator.init_port("{port_name}".into(), PortData::Bool({data.value})).await;
   """
                 )
 
@@ -187,12 +174,6 @@ class RustTarget(BaseCompiler):
         mapping: set[str],
     ):
         program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
-        
-        # assigns the execution to a new thread in the current group
-        # thread_name = self.get_thread_name()
-        # group.thread_stack.append(thread_name)
-        # group.thread_counter += 1
 
         outputs = flow[1]
         output_port_name = next(iter(outputs))[0] if outputs else ""
@@ -200,139 +181,140 @@ class RustTarget(BaseCompiler):
         # output port
         output_port = "None"
         if output_port_name:
-            output_port = f"Some(PortID::{output_port_name.upper()})"
+            output_port = f"Some(\"{output_port_name}\".into())"
 
         # output
-        output = "None"
+        output = "StepOutput::None"
         if output_port_name:
             output_value = f"\"{step.processors[output_port_name].glob}\""
-            output = f"File({output_value}.to_string())"
+            output = f"StepOutput::File({output_value}.to_string())"
 
-        # input ports
-        input_ports = ""
-        for port_name, _ in flow[0]:
-            input_ports += f"\n{self.get_indent()}\t\tPortID::{port_name.upper()},"
+        input_ports = ", ".join([f"\"{port_name}\".into()" for port_name, _ in flow[0]])
 
         # arguments
         arguments = ""
         for arg in step.arguments:
             if isinstance(arg, Port):
-                arguments += f"\n{self.get_indent()}\t\tPortID::{arg.name.upper()}.into(),"
+                arguments += f"\n{self.get_indent(2)}StepArgument::Port(\"{arg.name}\".into()),"
             else:
-                arguments += f"\n{self.get_indent()}\t\t\"{arg}\".into(),"
+                arguments += f"\n{self.get_indent(2)}StepArgument::String(\"{arg}\".into()),"
 
         # replace "\" with "\\" in the arguments
         arguments = arguments.replace("\\", "\\\\")
 
         program.write(
-            f"""\n
-{self.get_indent()}communicator.exec(
-{self.get_indent()}  "{step.name}".to_string(), // name
-{self.get_indent()}  "{step.display_name}".to_string(), // display name
-{self.get_indent()}  vec![ // input ports {input_ports}
-{self.get_indent()}  ],
-{self.get_indent()}  {output_port}, // output port
-{self.get_indent()}  StepOutput::{output}, // output
-{self.get_indent()}  "{step.command}".to_string(), // command
-{self.get_indent()}  vec![ // arguments {arguments}
-{self.get_indent()}  ]
-{self.get_indent()}).await;"""
+f"""
+{self.get_indent()}swirl.exec(
+{self.get_indent(1)}"{step.name}".to_string(), // name
+{self.get_indent(1)}"{step.display_name}".to_string(), // display name
+{self.get_indent(1)}vec![{input_ports}], // input ports
+{self.get_indent(1)}{output_port}, // output port
+{self.get_indent(1)}{output}, // output type
+{self.get_indent(1)}"{step.command}".to_string(), // command
+{self.get_indent(1)}vec![{arguments}
+{self.get_indent(1)}], // arguments
+{self.get_indent()}).await;
+
+"""
         )
+
 
     def recv(self, port: str, data_type: str, src: str, dst: str):
         program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
         
         # assigns the receive to a new thread in the current group
-        thread_name = self.get_thread_name("recv")
-        group.add_thread(thread_name)
+        self.refresh_join_set()
+        self.thread_stack.add_thread()
 
-        program.write(
-            f"""
-{self.get_indent()}let {thread_name} = communicator.receive(PortID::{port.upper()}, LocationID::{src.upper()}).await;"""
+        program.write(f"""
+{self.get_indent()}join_set = swirl.receive("{port}".into(), "{src}".into(), join_set).await;"""
         )
 
     def send(self, data: str, port: str, data_type: str, src: str, dst: str):
         program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
-        
-        # assigns the send to a new thread in the current group
-        thread_name = self.get_thread_name("send")
-        group.add_thread(thread_name)
 
-        program.write(
-            f"""
-{self.get_indent()}let {thread_name} = communicator.send(PortID::{port.upper()}, LocationID::{dst.upper()}).await;"""
-        )
-
-        # self.broadcast_stack[port].append(dst)
+        if ENABLE_BROADCAST:
+            self.broadcast_stack[port].append(dst)
+        else:
+            # assigns the send to a new thread in the current group
+            self.refresh_join_set()
+            self.thread_stack.add_thread()
+            program.write(f"""
+{self.get_indent()}join_set = swirl.send("{port}".into(), "{dst}".into(), join_set).await;
+            """)
 
     def empty_broadcast_stack(self):
+        program = self.programs[self.current_location.name]
+
+        # if the stack is empty, do nothing
         if len(self.broadcast_stack) == 0:
             return
-
-        program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
-
+        
         for port in self.broadcast_stack:
-            thread_name = self.get_thread_name("broadcast")
-            group.add_thread(thread_name)
+            self.refresh_join_set()
+            self.thread_stack.add_thread()
 
-            destinations_str = ""
-            for destination in self.broadcast_stack[port]:
-                destinations_str += f"\n{self.get_indent(1)}LocationID::{destination.upper()},"
-            destinations_str = destinations_str[:-1]
-            destinations_str = f"vec![{destinations_str}\n{self.get_indent()}]"
+            destinations = self.broadcast_stack[port]
 
-            program.write(
-                f"""
-{self.get_indent()}let {thread_name} = communicator.broadcast(PortID::{port.upper()}, {destinations_str}).await;
-                """
-            )
+            # if there is only one destination, use the send method
+            if len(destinations) == 1:
+                program.write(
+                    f"""
+{self.get_indent()}join_set = swirl.send("{port}".into(), "{destinations[0]}".into(), join_set).await;
+                    """
+                )
+
+            # if there are multiple destinations, use the broadcast method
+            else:
+                destinations_str = ", ".join([f"\"{destination}\".into()" for destination in destinations])
+                destinations_str = f"vec![{destinations_str}]"
+
+                program.write(
+                    f"""
+{self.get_indent()}join_set = swirl.broadcast("{port}".into(), {destinations_str}, join_set).await;
+                    """
+                )
+
+        self.broadcast_stack.clear()
 
     def seq(self):
         program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
 
-        self.empty_broadcast_stack()
-        self.empty_group_thread_stack()
+        if ENABLE_BROADCAST: self.empty_broadcast_stack()
+        self.wait_thread_group()
+
         program.write(f"""
-//  ===================== sequential step (follows) =====================""")
+{self.get_indent()}//  ===================== sequential step (follows) =====================""")
     
     def begin_paren(self) -> None:
-        self.empty_broadcast_stack()
+        if ENABLE_BROADCAST: self.empty_broadcast_stack()
 
         program = self.programs[self.current_location.name]
-        group = self.group_stack.top()
-        thread_name = self.get_thread_name("group")
-        group.add_thread(thread_name)
-        
-        # creates a new group...
-        new_group = self.group_stack.push()
 
-        program.write(
-            f"""\n
-// ===================== group #{new_group.group_id} start =====================
-{self.get_indent(-1)}let {thread_name} = tokio::spawn({{ let communicator = communicator.clone(); async move {{"""
-        )
+        self.refresh_join_set()
+
+        program.write(f"""
+{self.get_indent()}//  ===================== group start =====================
+{self.get_indent()}join_set.spawn({{ let swirl = swirl.clone(); async move {{
+""")
+        self.thread_stack.add_thread()
+        self.thread_stack.add_group()
 
     def end_paren(self):
-        self.empty_broadcast_stack()
+        if ENABLE_BROADCAST: self.empty_broadcast_stack()
 
         program = self.programs[self.current_location.name]
 
         # wait for the remaining threads in the current group
-        self.empty_group_thread_stack()
+        self.wait_thread_group()
 
         # remove the current group from the stack
-        group = self.group_stack.pop()
-        
-        # spawn group as a new thread in the current group
+        self.thread_stack.pop_group()
         
         program.write(
             f"""
 {self.get_indent()}}}}});
-//  ===================== group #{group.group_id} end =====================
+{self.get_indent()}//  ===================== group end =====================
 """)
     
     # the parallel blocks are not explicitly defined in the Rust code, the default behavior is to run in parallel
@@ -340,6 +322,17 @@ class RustTarget(BaseCompiler):
     def par(self) -> None: pass
     def end_par(self) -> None: pass
 
+
+#   join_set.spawn(async move {
+#     let join_set =  JoinSet::new();
+
+#     let join_set = swirl.send("l1".into(), "l1".into(), join_set).await;
+#     let join_set = swirl.send("l2".into(), "l2".into(), join_set).await;
+
+#     join_set.join_all().await;
+#   });
+
+#   join_set.join_all().await;
 
 # (
 #   send(d0 ->p26,l0,l5) | send(d18->p30,l0,l1) | send(d1->p27,l0,l1) | send(d1 ->p27,l0,l8) | send(d0->p26,l0,l1) |
