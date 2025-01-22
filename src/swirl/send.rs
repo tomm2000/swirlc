@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use bytes::Bytes;
 use tokio::task::JoinSet;
 
-use crate::orchestra::LocationID;
+use crate::orchestra::{utils::{data_size, debug_prelude}, LocationID};
 
 use super::{PortData, PortID, Swirl};
 
@@ -14,7 +14,6 @@ impl Swirl {
     destination: String,
     join_set: JoinSet<()>,
   ) -> JoinSet<()> {
-    println!("Sending data from port {} to {}", port_id, destination);
 
     let destination = self.orchestra.location_id(&destination);
 
@@ -50,6 +49,8 @@ impl Swirl {
         let header_data = bincode::serialize(&header_data).unwrap();
         let header_data = Bytes::from(header_data);
 
+        println!("{} Sending file data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, data_size(file_size));
+
         let join_set = self.orchestra.send_joinset(
           destination,
           port_id,
@@ -59,8 +60,6 @@ impl Swirl {
           join_set
         );
 
-        println!("Sent file data");
-
         return join_set;
       }
       PortData::Empty => {
@@ -69,18 +68,23 @@ impl Swirl {
       }
       data => {
         let data = bincode::serialize(&data).unwrap();
-        let data_size = data.len();
+        let size = data.len();
+
+        println!("{} Sending data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, data_size(size));
 
         self.orchestra.send_joinset(
           destination,
           port_id,
           tokio::io::empty(),
           Bytes::from(data),
-          data_size,
+          size,
           join_set
         )
+
       }
     };
+
+    println!("{} Completed send of data", debug_prelude(&self.orchestra.self_name(), None));
 
     return handle;
   }

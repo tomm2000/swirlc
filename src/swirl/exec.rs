@@ -1,6 +1,6 @@
 use std::{ops::Deref, path::PathBuf};
 
-use crate::{orchestra::utils::{self, execute_command}, swirl::PortData};
+use crate::{orchestra::utils::{self, debug_prelude, execute_command}, swirl::PortData};
 
 use super::{PortID, StepArgument, StepOutput, Swirl};
 
@@ -48,6 +48,7 @@ impl Swirl {
             .to_string();
   
           let new_path = step_workdir.join(&file_name);
+          
   
           // create symlink
           #[cfg(unix)]
@@ -107,29 +108,23 @@ impl Swirl {
     }
   
     //======================== Execute Command ========================
-    // let t = self.amdahline.begin_task(
-    //   format!("{:?}", self.location),
-    //   format!("exec {:?} ({})", step_name, step_display_name),
-    // );
-  
-    // let arguments = arguments.join(" ");
-  
-    // println!(
-    //   "{} Running command: '{} {}'",
-    //   debug_prelude(&self.location, Some(&step_name)),
-    //   cmd,
-    //   arguments.join(" ")
-    // );
-  
-    // let start_time = std::time::Instant::now();
+    println!(
+      "{} Running command: '{} {}'",
+      debug_prelude(&self.orchestra.self_name(), Some(&step_name)),
+      cmd,
+      arguments.join(" ")
+    );
   
     let (output, status) = match output_type {
       StepOutput::Stdout => {
         let output = utils::execute_command_output(&cmd, &arguments, &step_workdir).await;
         let status = output.status;
-        
+
         println!(
-          "Completed step: {} with status: {}", step_name, status,
+          "{} Completed step: {} with status: {}",
+          debug_prelude(&self.orchestra.self_name(), Some(&step_name)),
+          step_display_name,
+          status,
         );
 
         (Some(output), status)
@@ -138,7 +133,10 @@ impl Swirl {
         let status = utils::execute_command(&cmd, &arguments, &step_workdir).await;
 
         println!(
-          "Completed step: {} with status: {}", step_name, status,
+          "{} Completed step: {} with status: {}",
+          debug_prelude(&self.orchestra.self_name(), Some(&step_name)),
+          step_display_name,
+          status,
         );
   
         (None, status)

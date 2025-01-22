@@ -1,7 +1,5 @@
 use std::{collections::HashMap, sync::Arc};
-
 use tokio::task::JoinSet;
-
 use crate::{orchestra::LocationInfo, swirl::{StepOutput, Swirl}};
 
 pub async fn location0(location: String, address_map: HashMap<String, LocationInfo>) {

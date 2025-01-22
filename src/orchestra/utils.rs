@@ -54,14 +54,6 @@ pub fn addresses_from_config_file(file_path: &str) -> HashMap<String, LocationIn
   location_map
 }
 
-// child = tokio::process::Command::new("sh")
-// .arg("-c")
-// .arg("ls -l")
-// .current_dir(".")
-// .stdout(std::process::Stdio::piped())
-// .spawn()
-// .expect("failed to spawn shell command");
-
 pub async fn execute_command_output(
   command: &String,
   arguments: &Vec<String>,
@@ -69,8 +61,6 @@ pub async fn execute_command_output(
 ) -> Output {
   let child: Child;
 
-  println!("Executing command: {} {}", command, arguments.join(" "));
-  
   #[cfg(target_os = "linux")] {
   child = tokio::process::Command::new("sh")
     .arg("-c")
@@ -104,8 +94,6 @@ pub async fn execute_command(
 ) -> ExitStatus {
   let mut child: Child;
 
-  println!("Executing command: {} {}", command, arguments.join(" "));
-  
   #[cfg(target_os = "linux")] {
   child = tokio::process::Command::new("sh")
     .arg("-c")

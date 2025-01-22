@@ -12,97 +12,28 @@ use tokio::{
   task::{JoinHandle, JoinSet},
 };
 
-// fn destinations_logarithmic(destinations: Vec<LocationID>, data_size: usize) -> Vec<(LocationID, MessageTag)> {
-//   let mut destinations = destinations.clone();
+// TODO: for the broadcasts, instead of passing a vector of destinations, create an Into<Destinations> trait
 
-//   let n_steps = (destinations.len() as f64 + 1.0).log2().ceil() as usize;
-
-//   let mut parts = Vec::new();
-
-//   // divide the destionation in 2 parts over and over again
-//   for _ in 0..n_steps {
-//     let part_size = destinations.len() / 2 + 1;
-//     let part_size = if part_size > destinations.len() { destinations.len() } else { part_size };
-//     let mut part = Vec::new();
-
-//     for _ in 0..part_size {
-//       part.push(destinations.pop().unwrap());
-//     }
-
-//     parts.push(part);
-//   }
-
-//   let mut destination_tags: Vec<(LocationID, MessageTag)> = Vec::new();
-
-//   // the first n-1 parts will be relay tags
-//   for part in parts.iter().take(parts.len() - 1) {
-//     // the message should be relayed to the 1:part.len() destinations (first location is excluded)
-//     let tag = MessageTag::Relay(data_size, part[1..].to_vec());
-
-//     destination_tags.push((part[0], tag));
-//   }
-
-//   // the last part will be a data tag
-//   for destination in parts.last().unwrap() {
-//     let tag = MessageTag::Data(data_size);
-
-//     destination_tags.push((*destination, tag));
-//   }
-
-//   destination_tags
-// }
-
-fn destination_ntree_advanced(destinations: Vec<LocationID>, orchestra: &Orchestra) -> RelayTag {
-  let mut location_map: HashMap<String, Vec<LocationID>> = HashMap::new();
-
-  destinations.iter().for_each(|destination| {
-    let location_info = orchestra
-      .addresses
-      .get(destination)
-      .expect(format!("<Orchestra> unknown destination: {:?}", destination).as_str());
-    let machine = location_info.machine.clone();
-
-    if location_map.contains_key(&machine) {
-      location_map
-        .get_mut(&machine)
-        .unwrap()
-        .push(destination.clone());
-    } else {
-      location_map.insert(machine, vec![destination.clone()]);
-    }
-  });
-
-  // TODO: also transform the master nodes into a relay chain
-
-  let mut relay_instructions: Vec<RelayInstruction> = Vec::new();
-
-  for (machine, destinations) in location_map.iter() {
-    let machine_master = destinations[0].clone();
-    let machine_slaves = destinations[1..].to_vec();
-
-    println!(
-      "machine: {:?}, master: {:?}, slaves: {:?}",
-      machine, machine_master, machine_slaves
-    );
-
-    if destinations.len() > 1 {
-      let tag = destinations_ntree(machine_slaves, 1);
-
-      relay_instructions.push(RelayInstruction {
-        destination: machine_master,
-        tag,
-      });
-    } else if destinations.len() == 1 {
-      relay_instructions.push(RelayInstruction {
-        destination: machine_master,
+/**
+ * Generates a `RelayTag` describing a naive broadcast pattern.
+ * `NAIVE`: The broadcasting node sends directly to each destination node.
+ */
+fn destinations_naive(destinations: Vec<LocationID>) -> RelayTag {
+  return RelayTag::Relay(
+    destinations
+      .iter()
+      .map(|destination| RelayInstruction {
+        destination: destination.clone(),
         tag: RelayTag::Data(),
-      });
-    }
-  }
-
-  RelayTag::Relay(relay_instructions)
+      })
+      .collect(),
+  );
 }
 
+/**
+ * Generates a `RelayTag` describing a n-tree broadcast pattern.
+ * `NTREE`: The broadcasting node sends to n nodes, each of which sends to n other nodes, and so on.
+ */
 fn destinations_ntree(destinations: Vec<LocationID>, n: usize) -> RelayTag {
   let mut parts = Vec::new();
 
@@ -135,22 +66,76 @@ fn destinations_ntree(destinations: Vec<LocationID>, n: usize) -> RelayTag {
   RelayTag::Relay(destination_tags)
 }
 
-fn destinations_naive(destinations: Vec<LocationID>) -> RelayTag {
-  return RelayTag::Relay(
-    destinations
-      .iter()
-      .map(|destination| RelayInstruction {
-        destination: destination.clone(),
-        tag: RelayTag::Data(),
-      })
-      .collect(),
-  );
+/**
+* Generates a `RelayTag` describing a more advanced broadcast pattern.
+* `ADVANCED`: This broadcasting pattern works similar to the ntree pattern, but also accounts for the machine each node is on.
+  the nodes are grouped per machine, and a master node is elected for each group. The broadcaster sends to each master node,
+   and the master nodes send to the rest of the nodes in their group (following the ntree pattern).
+*/
+fn destination_ntree_advanced(node: LocationID, destinations: Vec<LocationID>, orchestra: &Orchestra) -> RelayTag {
+  // println!("broadcasting from node: {:?}", node);
+
+  let master_machine = orchestra
+    .addresses
+    .get(&node)
+    .expect(format!("<Orchestra> unknown node: {:?}", node).as_str())
+    .machine
+    .clone();
+
+  // println!("machine: {:?}", master_machine);
+
+  let mut slaves: Vec<LocationID> = Vec::new();
+
+  // find the locations on the same machine as node, and remove node from the list
+  let other_destinations = destinations.iter().filter(|destination| {
+    let location_info = orchestra
+      .addresses
+      .get(destination)
+      .expect(format!("<Orchestra> unknown destination: {:?}", destination).as_str());
+    let machine = location_info.machine.clone();
+
+    if master_machine == machine {
+      slaves.push((*destination).clone());
+      return false;
+    }
+
+    return true;
+  }).map(|id| id.clone()).collect::<Vec<LocationID>>();
+
+  // println!("slaves: {:?}, other_destinations: {:?}", slaves, other_destinations);
+
+  let mut slave_instructions: Vec<RelayInstruction> = slaves.iter().map(|destination| {
+    RelayInstruction {
+      destination: destination.clone(),
+      tag: RelayTag::Data(),
+    }
+  }).collect();
+
+  if other_destinations.len() == 0 {
+    return RelayTag::Relay(slave_instructions);
+  }
+
+  // if there are more destinations, find the next node to send to
+  let next_node = other_destinations[0].clone();
+  let other_destinations = other_destinations[1..].to_vec();
+  let next_tag = destination_ntree_advanced(next_node.clone(), other_destinations, orchestra);
+
+  slave_instructions.push(RelayInstruction {
+    destination: next_node.clone(),
+    tag: next_tag
+  });
+
+  return RelayTag::Relay(slave_instructions);
 }
 
 impl Orchestra {
-  
-
-  pub async fn blocking_broadcast<R>(
+  /**
+  * Reads the data in the reader `R` and sends it to the destinations.
+  * `header_data` is a byte array that can be used to send additional data with the message header.
+   (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+  * `BLOCKING`: `.await` blocks the task until the whole message is sent.
+  */
+  pub async fn broadcast_blocking<R>(
     &self,
     destinations: Vec<LocationID>,
     message_id: String,
@@ -162,14 +147,18 @@ impl Orchestra {
   {
     // let instructions = destinations_naive(destinations);
     // let instructions = destinations_ntree(destinations, 2);
-    let instructions = destination_ntree_advanced(destinations, &self);
+    let instructions = destination_ntree_advanced(self.location.clone(), destinations, self);
 
-    println!("{}", instructions.display(self));
+    // println!(
+    //   "{} Broadcasting message to {}",
+    //   debug_prelude(&self.self_name(), None),
+    //   instructions.display(self)
+    // );
 
     match instructions {
       RelayTag::Relay(relay_instructions) => {
         self
-          .blocking_broadcast_relay(
+          .broadcast_relay(
             relay_instructions,
             message_id,
             reader,
@@ -189,6 +178,12 @@ impl Orchestra {
     }
   }
 
+  /**
+  * Reads the data in the reader `R` and sends it to the destinations.
+  * `header_data` is a byte array that can be used to send additional data with the message header.
+   (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+  * `NON-BLOCKING`: returns a `JoinHandle` that can be awaited to wait for completion.
+  */
   pub fn broadcast<R>(
     self: &Arc<Self>,
     destinations: Vec<LocationID>,
@@ -204,11 +199,17 @@ impl Orchestra {
 
     tokio::spawn(async move {
       orchestra
-        .blocking_broadcast(destinations, message_id, reader, header_data, data_size)
+        .broadcast_blocking(destinations, message_id, reader, header_data, data_size)
         .await
     })
   }
 
+  /**
+  * Reads the data in the reader `R` and sends it to the destinations.
+  * `header_data` is a byte array that can be used to send additional data with the message header.
+   (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+  * `NON-BLOCKING`: adds a task to the `JoinSet` and returns the updated `JoinSet`.
+  */
   pub fn broadcast_joinset<R>(
     self: &Arc<Self>,
     destinations: Vec<LocationID>,
@@ -216,7 +217,7 @@ impl Orchestra {
     reader: R,
     header_data: Bytes,
     data_size: usize,
-    mut join_set: JoinSet<()>
+    mut join_set: JoinSet<()>,
   ) -> JoinSet<()>
   where
     R: AsyncReadExt + Unpin + Send + 'static,
@@ -225,35 +226,20 @@ impl Orchestra {
 
     join_set.spawn(async move {
       orchestra
-        .blocking_broadcast(destinations, message_id, reader, header_data, data_size)
+        .broadcast_blocking(destinations, message_id, reader, header_data, data_size)
         .await;
     });
 
     join_set
   }
 
+  /**
+   * **NOTE**: Support function, use `broadcast`, `broadcast_blocking`, or `broadcast_joinset` instead.
+   * Relays the data from the reader `R` to the destinations specified in the `RelayTag`.
+   * The data is also copied into the `read_into` parameter.
+   * `BLOCKING`: `.await` blocks the task until the whole message is sent.
+   */
   pub async fn broadcast_relay<R, W>(
-    self: &Arc<Self>,
-    relay_instructions: Vec<RelayInstruction>,
-    message_id: String,
-    reader: R,
-    header_data: Bytes,
-    data_size: usize,
-    origin: LocationID,
-    read_into: W
-  ) -> JoinHandle<W>
-  where
-    R: AsyncReadExt + Unpin + Send + 'static,
-    W: AsyncWrite + Unpin + Send + 'static
-  {
-    let orchestra = self.clone();
-
-    tokio::spawn(async move {
-      orchestra.blocking_broadcast_relay(relay_instructions, message_id, reader, header_data, data_size, origin, read_into).await
-    })
-  }
-
-  pub async fn blocking_broadcast_relay<R, W>(
     &self,
     relay_instructions: Vec<RelayInstruction>,
     id: String,
@@ -361,9 +347,10 @@ impl Orchestra {
         .expect("failed to shutdown message data");
     }
 
-    read_into.flush().await.expect("failed to flush message data");
-
-    // println!("{} communicated to {} locations", debug_prelude(&self.location, None), streams.len());
+    read_into
+      .flush()
+      .await
+      .expect("failed to flush message data");
 
     read_into
   }

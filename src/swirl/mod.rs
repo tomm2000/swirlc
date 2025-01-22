@@ -119,4 +119,10 @@ impl Swirl {
       workdir
     }
   }
+
+  pub async fn init_port(&self, port: PortID, value: PortData) {
+    let data = self.ports.get(&port).expect("port not found");
+    data.set(value).await;
+    data.port_ready.notify_waiters();
+  }
 }

@@ -1,18 +1,21 @@
-pub mod utils;
-pub mod send;
-pub mod receive;
 pub mod broadcast;
+pub mod receive;
+pub mod send;
+pub mod utils;
 
-use std::{collections::HashMap, fmt::Debug, hash::Hash, sync::{atomic::AtomicBool, Arc}, vec};
+use std::{collections::HashMap, sync::Arc};
 
-use tokio::{io::{AsyncReadExt, BufReader}, net::{TcpListener, TcpStream}, sync::RwLock};
+use tokio::{
+  io::{AsyncReadExt, BufReader},
+  net::{TcpListener, TcpStream},
+  sync::RwLock,
+};
 use utils::debug_prelude;
 
 const MESSAGE_HEADER_SIZE: usize = 1024;
 const MESSAGE_CHUNK_SIZE: usize = 8 * 1024 * 1024;
 
 pub type LocationID = u16;
-
 
 #[derive(serde::Serialize, serde::Deserialize, Hash, Eq, PartialEq, Debug, Clone)]
 pub enum RelayTag {
@@ -34,40 +37,39 @@ pub struct LocationInfo {
 
 impl RelayTag {
   fn display(&self, orchestra: &Orchestra) -> String {
-      self.display_with_indent(orchestra, 0)
+    self.display_with_indent(orchestra, 0)
   }
 
   // Helper function to handle indentation
   fn display_with_indent(&self, orchestra: &Orchestra, indent: usize) -> String {
-      let indent_str = "  ".repeat(indent);
-      
-      match self {
-          RelayTag::Data() => {
-              format!("{}Data", indent_str)
-          },
-          RelayTag::Relay(instructions) => {
-              let mut result = format!("{}Relay\n", indent_str);
-              
-              for instruction in instructions {
-                  // Get location name or ID if name not available
-                  let dest_name = orchestra
-                      .location_name(instruction.destination);
-                  
-                  // Add destination
-                  result.push_str(&format!("{}| → to {}\n", "  ".repeat(indent), dest_name));
-                  
-                  // Recursively display nested tree
-                  result.push_str(&instruction.tag.display_with_indent(orchestra, indent + 1));
-                  
-                  // Add newline between instructions unless it's the last one
-                  if instruction != instructions.last().unwrap() {
-                      result.push('\n');
-                  }
-              }
-              
-              result
-          }
+    let indent_str = "  ".repeat(indent);
+
+    match self {
+      RelayTag::Data() => {
+        format!("{}Data", indent_str)
       }
+      RelayTag::Relay(instructions) => {
+        let mut result = format!("{}Relay\n", indent_str);
+
+        for instruction in instructions {
+          // Get location name or ID if name not available
+          let dest_name = orchestra.location_name(instruction.destination);
+
+          // Add destination
+          result.push_str(&format!("{}| → to {}\n", "  ".repeat(indent), dest_name));
+
+          // Recursively display nested tree
+          result.push_str(&instruction.tag.display_with_indent(orchestra, indent + 1));
+
+          // Add newline between instructions unless it's the last one
+          if instruction != instructions.last().unwrap() {
+            result.push('\n');
+          }
+        }
+
+        result
+      }
+    }
   }
 }
 
@@ -85,7 +87,8 @@ pub struct Orchestra {
   pub location: LocationID,
   addresses: HashMap<LocationID, LocationInfo>,
   locations: HashMap<String, LocationID>,
-  incoming_messages: Arc<RwLock<HashMap<(LocationID, String), (MessageHeader, BufReader<TcpStream>)>>>,
+  incoming_messages:
+    Arc<RwLock<HashMap<(LocationID, String), (MessageHeader, BufReader<TcpStream>)>>>,
 }
 
 unsafe impl Send for Orchestra {}
@@ -106,7 +109,7 @@ impl Orchestra {
       addresses.insert(i as LocationID, address.clone());
       locations.insert(location.clone(), i as LocationID);
     }
-    
+
     let location: LocationID = *locations.get(&location).unwrap();
 
     Self {
@@ -117,6 +120,7 @@ impl Orchestra {
     }
   }
 
+  // TODO: clean this up
   pub fn locations(&self) -> &HashMap<String, LocationID> {
     &self.locations
   }
@@ -126,11 +130,20 @@ impl Orchestra {
   }
 
   pub fn location_id(&self, location: &str) -> LocationID {
-    *self.locations.get(location).expect(format!("Location {} not found", location).as_str())
+    *self
+      .locations
+      .get(location)
+      .expect(format!("Location {} not found", location).as_str())
   }
 
   pub fn location_name(&self, location_id: LocationID) -> String {
-    self.locations.iter().find(|(_, id)| **id == location_id).unwrap().0.clone()
+    self
+      .locations
+      .iter()
+      .find(|(_, id)| **id == location_id)
+      .unwrap()
+      .0
+      .clone()
   }
 
   pub fn self_name(&self) -> String {
@@ -141,6 +154,11 @@ impl Orchestra {
     self.addresses.get(&location).unwrap().clone()
   }
 
+  /**
+  * Spawns a task accepting incoming connections from other locations in a loop,
+   abort the handle to close the listener.
+  * `NON-BLOCKING`: this function spawns a task that listens for incoming connections, immediately returning a handle to the task.
+  */
   pub fn accept_connections(self: &Arc<Self>) -> tokio::task::JoinHandle<()> {
     let orchestra = self.clone();
 
@@ -150,7 +168,12 @@ impl Orchestra {
       let listener = TcpListener::bind(&location_info.address).await;
 
       if let Err(e) = listener {
-        println!("{} failed to bind to address {:?} with error {:?}", debug_prelude(&orchestra.self_name(), None), location_info, e);
+        println!(
+          "{} failed to bind to address {:?} with error {:?}",
+          debug_prelude(&orchestra.self_name(), None),
+          location_info,
+          e
+        );
         return;
       }
 
@@ -186,10 +209,13 @@ impl Orchestra {
 
         let reader = BufReader::new(stream);
 
-        orchestra.incoming_messages
-          .write()
-          .await
-          .insert((message_header.origin.clone(), message_header.message_id.clone()), (message_header, reader));
+        orchestra.incoming_messages.write().await.insert(
+          (
+            message_header.origin.clone(),
+            message_header.message_id.clone(),
+          ),
+          (message_header, reader),
+        );
       }
     })
   }

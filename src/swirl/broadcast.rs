@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use bytes::Bytes;
 use tokio::{io::BufReader, task::JoinSet};
 
-use crate::orchestra::LocationID;
+use crate::orchestra::{utils::debug_prelude, LocationID};
 
 use super::{PortData, PortID, Swirl};
 
@@ -58,12 +58,12 @@ impl Swirl {
           join_set
         );
 
-        println!("Sent file data");
+        println!("{} Completed broadcast of file data", debug_prelude(&self.orchestra.self_name(), None));
 
         return join_set;
       }
       PortData::Empty => {
-        println!("PANIC: empty data");
+        println!("{} PANIC: empty data", debug_prelude(&self.orchestra.self_name(), None));
         panic!("empty data");
       }
       data => {
@@ -79,7 +79,7 @@ impl Swirl {
           join_set
         );
 
-        println!("Sent data");
+        println!("{} Completed broadcast of data", debug_prelude(&self.orchestra.self_name(), None));
 
         return join_set;
       }

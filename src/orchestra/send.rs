@@ -6,41 +6,13 @@ use std::sync::Arc;
 use bytes::Bytes;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter}, net::TcpStream, task::{JoinHandle, JoinSet}};
 
-
 impl Orchestra {
-  pub fn send<R>(
-    self: &Arc<Self>,
-    destination: LocationID,
-    message_id: String,
-    reader: R,
-    header_data: Bytes,
-    data_size: usize
-  ) -> JoinHandle<()> where R: AsyncReadExt + Unpin + Send + 'static {
-    let orchestra = self.clone();
-
-    tokio::spawn(async move {
-      orchestra.blocking_send(destination, message_id, reader, header_data, data_size, orchestra.location.clone()).await;
-    })
-  }
-
-  pub fn send_joinset<R>(
-    self: &Arc<Self>,
-    destination: LocationID,
-    location_id: String,
-    reader: R,
-    header_data: Bytes,
-    data_size: usize,
-    mut join_set: JoinSet<()>,
-  ) -> JoinSet<()> where R: AsyncReadExt + Unpin + Send + 'static {
-    let orchestra = self.clone();
-
-    join_set.spawn(async move {
-      orchestra.blocking_send(destination, location_id, reader, header_data, data_size, orchestra.location).await;
-    });
-
-    join_set
-  }
-
+  /**
+   * Reads the data in the reader `R` and sends it to the destination.
+   * `header_data` is a byte array that can be used to send additional data with the message header.
+    (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+   * `BLOCKING`: `.await` blocks the task until the whole message is sent.
+   */
   pub async fn blocking_send<R>(
     self: &Arc<Self>,
     destination: LocationID,
@@ -98,5 +70,50 @@ impl Orchestra {
     tokio::io::copy(&mut reader, &mut writer).await.expect("failed to copy message data");
 
     writer.flush().await.expect("failed to flush message data");
+  }
+
+  /**
+   * Reads the data in the reader `R` and sends it to the destination.
+   * `header_data` is a byte array that can be used to send additional data with the message header.
+    (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+   * `NON-BLOCKING`: returns a `JoinHandle` that can be awaited to wait for completion.
+   */
+  pub fn send<R>(
+    self: &Arc<Self>,
+    destination: LocationID,
+    message_id: String,
+    reader: R,
+    header_data: Bytes,
+    data_size: usize
+  ) -> JoinHandle<()> where R: AsyncReadExt + Unpin + Send + 'static {
+    let orchestra = self.clone();
+
+    tokio::spawn(async move {
+      orchestra.blocking_send(destination, message_id, reader, header_data, data_size, orchestra.location.clone()).await;
+    })
+  }
+
+  /**
+   * Reads the data in the reader `R` and sends it to the destination.
+   * `header_data` is a byte array that can be used to send additional data with the message header.
+    (note that there is a maximum size limit for the header, by default `MESSAGE_HEADER_SIZE` bytes).
+   * `NON-BLOCKING`: adds a task to the `JoinSet` and returns the updated `JoinSet`.
+   */
+  pub fn send_joinset<R>(
+    self: &Arc<Self>,
+    destination: LocationID,
+    location_id: String,
+    reader: R,
+    header_data: Bytes,
+    data_size: usize,
+    mut join_set: JoinSet<()>,
+  ) -> JoinSet<()> where R: AsyncReadExt + Unpin + Send + 'static {
+    let orchestra = self.clone();
+
+    join_set.spawn(async move {
+      orchestra.blocking_send(destination, location_id, reader, header_data, data_size, orchestra.location).await;
+    });
+
+    join_set
   }
 }

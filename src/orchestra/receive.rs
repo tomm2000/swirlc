@@ -4,11 +4,16 @@ use super::{LocationID, Orchestra, RelayTag};
 use crate::orchestra::MessageHeader;
 use bytes::Bytes;
 use tokio::{
-  io::{AsyncWrite, BufReader},
+  io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
   net::TcpStream,
   task::{JoinHandle, JoinSet},
 };
 
+/**
+ * PartialReceive is a struct that is returned when receiving a message.
+ * It can be used to read the message header immediately and then (optionally) collect the message data.
+ * The `collect_*` methods are used to collect the message data into a specific type.
+ */
 pub struct PartialReceive {
   pub header: MessageHeader,
   pub reader: BufReader<TcpStream>,
@@ -16,7 +21,8 @@ pub struct PartialReceive {
 }
 
 impl PartialReceive {
-  pub async fn receive_blocking_into<W>(mut self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
+  // ==================== Receive into ====================
+  pub async fn collect_blocking_into<W>(mut self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
     match self.header.relay_tag.clone() {
       RelayTag::Data() => {
         tokio::io::copy(&mut self.reader, &mut writer)
@@ -25,7 +31,7 @@ impl PartialReceive {
       }
       RelayTag::Relay(relay_instructions) => {
         let writer = self.orchestra
-          .blocking_broadcast_relay(
+          .broadcast_relay(
             relay_instructions,
             self.header.message_id.clone(),
             self.reader,
@@ -42,23 +48,108 @@ impl PartialReceive {
     return writer;
   }
 
-  pub async fn receive_into<W>(self, writer: W) -> JoinHandle<W> where W: AsyncWrite + Unpin + Send + 'static {
+  pub fn collect_into<W>(self, writer: W) -> JoinHandle<W> where W: AsyncWrite + Unpin + Send + 'static {
     tokio::spawn(async move {
-      self.receive_blocking_into(writer).await
+      self.collect_blocking_into(writer).await
     })
   }
 
-  pub async fn receive_joinset_into<W>(self, writer: W, mut join_set: JoinSet<W>) -> JoinSet<W> where W: AsyncWrite + Unpin + Send + 'static {
+  pub fn collect_joinset_into<W>(self, writer: W, mut join_set: JoinSet<W>) -> JoinSet<W> where W: AsyncWrite + Unpin + Send + 'static {
     join_set.spawn(async move {
-      self.receive_blocking_into(writer).await
+      self.collect_blocking_into(writer).await
     });
 
     join_set
   }
+  // ======================================================
+
+  // ==================== Receive Vec<u8> =================
+  pub async fn collect_blocking_vecu8(self) -> Vec<u8> {
+    let data = Vec::with_capacity(self.header.size as usize);
+    let writer = BufWriter::new(data);
+
+    let mut writer = self.collect_blocking_into(writer).await;
+
+    writer.flush().await.expect("failed to flush writer");
+
+    let data = writer.into_inner();
+
+    data
+  }
+
+  pub fn collect_vecu8(self) -> JoinHandle<Vec<u8>> {
+    tokio::spawn(async move {
+      self.collect_blocking_vecu8().await
+    })
+  }
+
+  pub fn collect_joinset_vecu8(self, mut join_set: JoinSet<Vec<u8>>) -> JoinSet<Vec<u8>> {
+    join_set.spawn(async move {
+      self.collect_blocking_vecu8().await
+    });
+
+    join_set
+  }
+  // ======================================================
+
+  // ==================== Receive String =================
+  pub async fn collect_blocking_string(self) -> String {
+    let data = self.collect_blocking_vecu8().await;
+
+    String::from_utf8(data).unwrap()
+  }
+
+  pub fn collect_string(self) -> JoinHandle<String> {
+    tokio::spawn(async move {
+      self.collect_blocking_string().await
+    })
+  }
+
+  pub fn collect_joinset_string(self, mut join_set: JoinSet<String>) -> JoinSet<String> {
+    join_set.spawn(async move {
+      self.collect_blocking_string().await
+    });
+
+    join_set
+  }
+  // ======================================================
+
+  // ==================== Receive File ===================
+  pub async fn collect_blocking_file<P>(self, path: P) where P: AsRef<std::path::Path> {
+    let file = tokio::fs::OpenOptions::new()
+      .write(true)
+      .create(true)
+      .open(path)
+      .await
+      .expect("failed to open file");
+    let writer = tokio::io::BufWriter::new(file);
+
+    let mut writer = self.collect_blocking_into(writer).await;
+    writer.shutdown().await.expect("failed to shutdown writer");
+  }
+
+  pub fn collect_file<P>(self, path: P) -> JoinHandle<()> where P: AsRef<std::path::Path> + Send + 'static {
+    tokio::spawn(async move {
+      self.collect_blocking_file(path).await
+    })
+  }
+
+  pub fn collect_joinset_file<P>(self, path: P, mut join_set: JoinSet<()>) -> JoinSet<()> where P: AsRef<std::path::Path> + Send + 'static {
+    join_set.spawn(async move {
+      self.collect_blocking_file(path).await
+    });
+
+    join_set
+  }
+  // ======================================================
 }
 
 impl Orchestra {
-  async fn collect_message(
+  /**
+   * Fetches a message from the incoming messages buffer.
+   * `.await` blocks until the message is available.
+   */
+  async fn fetch_message(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
@@ -84,16 +175,24 @@ impl Orchestra {
     }
   }
 
+  /**
+   * Receives the message header from a specific sender, the returned `PartialReceive` can be used to collect the message data.
+   * `BLOCKING`: `.await` blocks the task until the message is available.
+   */
   pub async fn receive_blocking(
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
   ) -> PartialReceive {
-    let (header, reader) = self.collect_message(sender, message_id).await;
+    let (header, reader) = self.fetch_message(sender, message_id).await;
 
     PartialReceive { header, reader, orchestra: self.clone() }
   }
 
+  /**
+   * Receives the message header from a specific sender, the returned `PartialReceive` can be used to collect the message data.
+   * `NON-BLOCKING`: join the returned `JoinHandle` to wait for completion.
+   */
   pub fn receive(
     self: &Arc<Self>,
     sender: LocationID,
@@ -106,6 +205,10 @@ impl Orchestra {
     })
   }
 
+  /**
+   * Receives the message header from a specific sender, the returned `PartialReceive` can be used to collect the message data.
+   * `NON-BLOCKING`: adds a task to the `JoinSet` and returns the updated `JoinSet`.
+   */
   pub fn receive_joinset(
     self: &Arc<Self>,
     sender: LocationID,
@@ -120,92 +223,4 @@ impl Orchestra {
 
     join_set
   }
-
-  // pub async fn receive(
-  //   self: &Arc<Self>,
-  //   sender: LocationID,
-  //   message_id: String,
-  // ) -> PartialReceive {
-  //   let (header, reader) = self.collect_message(sender, message_id).await;
-
-  //   PartialReceive { header, reader, orchestra: self.clone() }
-  // }
-
-  // pub async fn receive_joinset(
-  //   self: &Arc<Self>,
-  //   sender: LocationID,
-  //   message_id: String,
-  // ) -> PartialReceive {
-  //   let (header, reader) = self.collect_message(sender, message_id).await;
-
-  //   PartialReceive { header, reader, orchestra: self.clone() }
-  // }
-
-  // pub async fn receive_into<W>(
-  //   &self,
-  //   sender: LocationID,
-  //   message_id: String,
-  //   mut writer: W,
-  // ) -> (W, Bytes)
-  // where
-  //   W: AsyncWrite + Unpin + Send + 'static,
-  // {
-  //   let (header, mut reader) = self.receive_stream(sender, message_id.clone()).await;
-
-  //   let header_data = Bytes::from(header.header_data);
-
-  //   match header.relay_tag {
-  //     RelayTag::Data() => {
-  //       tokio::io::copy(&mut reader, &mut writer)
-  //         .await
-  //         .expect("failed to read message data");
-
-  //       (writer, header_data)
-  //     }
-  //     RelayTag::Relay(relay_instructions) => {
-  //       let writer = self
-  //         .blocking_broadcast_relay(
-  //           relay_instructions,
-  //           message_id,
-  //           reader,
-  //           header_data.clone(),
-  //           header.size,
-  //           header.origin,
-  //           Some(writer),
-  //         )
-  //         .await;
-
-  //       (writer.unwrap(), header_data)
-  //     }
-  //   }
-  // }
-
-  // pub async fn receive_vecu8(&self, sender: LocationID, id: String) -> (Vec<u8>, Bytes) {
-  //   let data = Vec::new();
-  //   let writer = BufWriter::new(data);
-
-  //   let (mut writer, header_data) = self.receive_into(sender, id, writer).await;
-
-  //   writer.flush().await.expect("failed to flush writer");
-
-  //   (writer.into_inner(), header_data)
-  // }
-
-  // pub async fn receive_string(&self, sender: LocationID, id: String) -> (String, Bytes) {
-  //   let (data, header_data) = self.receive_vecu8(sender, id).await;
-
-  //   (String::from_utf8(data).unwrap(), header_data)
-  // }
-
-  // pub async fn receive_file(&self, sender: LocationID, id: String, path: &str) {
-  //   let file = tokio::fs::OpenOptions::new()
-  //     .write(true)
-  //     .create(true)
-  //     .open(path)
-  //     .await
-  //     .expect("failed to open file");
-  //   let writer = BufWriter::new(file);
-
-  //   self.receive_into(sender, id, writer).await;
-  // }
 }
