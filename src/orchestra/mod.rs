@@ -3,7 +3,7 @@ pub mod receive;
 pub mod send;
 pub mod utils;
 
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::HashMap, io::Read, sync::Arc, thread};
 
 use tokio::{
   io::{AsyncReadExt, BufReader},
@@ -88,7 +88,7 @@ pub struct Orchestra {
   addresses: HashMap<LocationID, LocationInfo>,
   locations: HashMap<String, LocationID>,
   incoming_messages:
-    Arc<RwLock<HashMap<(LocationID, String), (MessageHeader, BufReader<TcpStream>)>>>,
+    Arc<RwLock<HashMap<(LocationID, String), (MessageHeader, TcpStream)>>>,
 }
 
 unsafe impl Send for Orchestra {}
@@ -207,14 +207,12 @@ impl Orchestra {
           message_header.origin
         );
 
-        let reader = BufReader::new(stream);
-
         orchestra.incoming_messages.write().await.insert(
           (
             message_header.origin.clone(),
             message_header.message_id.clone(),
           ),
-          (message_header, reader),
+          (message_header, stream),
         );
       }
     })

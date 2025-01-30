@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use bytes::Bytes;
 use tokio::task::JoinSet;
 
-use crate::orchestra::{utils::{data_size, debug_prelude}, LocationID};
+use crate::orchestra::{utils::{format_bytes, debug_prelude}, LocationID};
 
 use super::{PortData, PortID, Swirl};
 
@@ -49,7 +49,7 @@ impl Swirl {
         let header_data = bincode::serialize(&header_data).unwrap();
         let header_data = Bytes::from(header_data);
 
-        println!("{} Sending file data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, data_size(file_size));
+        println!("{} Sending file data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, format_bytes(file_size));
 
         let join_set = self.orchestra.send_joinset(
           destination,
@@ -70,7 +70,7 @@ impl Swirl {
         let data = bincode::serialize(&data).unwrap();
         let size = data.len();
 
-        println!("{} Sending data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, data_size(size));
+        println!("{} Sending data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, format_bytes(size));
 
         self.orchestra.send_joinset(
           destination,

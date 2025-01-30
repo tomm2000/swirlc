@@ -4,7 +4,7 @@ use tokio::process::Child;
 
 use super::LocationInfo;
 
-pub fn data_size(size: usize) -> String {
+pub fn format_bytes(size: usize) -> String {
   let kb = 1024;
   let mb = kb * 1024;
   let gb = mb * 1024;

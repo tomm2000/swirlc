@@ -1,7 +1,7 @@
-use crate::orchestra::{utils::debug_prelude, MessageHeader, RelayTag, MESSAGE_HEADER_SIZE};
+use crate::orchestra::{utils::{debug_prelude, format_bytes}, MessageHeader, RelayTag, MESSAGE_HEADER_SIZE};
 use super::{LocationID, Orchestra};
 
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
 use bytes::Bytes;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter}, net::TcpStream, task::{JoinHandle, JoinSet}};
@@ -36,7 +36,8 @@ impl Orchestra {
     }
 
     let stream = stream.unwrap();
-    let mut writer = BufWriter::new(stream);
+    let mut writer = BufWriter::with_capacity(1024*1024*64, stream);
+    // let mut writer = BufWriter::new(stream);
 
     // === Write message header ===
     let message_header = MessageHeader {
@@ -66,7 +67,7 @@ impl Orchestra {
     writer.flush().await.expect("failed to flush message header");
 
     // === Write message data ===
-    let mut reader = BufReader::new(reader);
+    let mut reader = BufReader::with_capacity(1024*1024*64, reader);
     tokio::io::copy(&mut reader, &mut writer).await.expect("failed to copy message data");
 
     writer.flush().await.expect("failed to flush message data");

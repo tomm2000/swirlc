@@ -4,7 +4,7 @@ use tokio::task::JoinSet;
 
 use crate::orchestra::{
   self,
-  utils::{data_size, debug_prelude},
+  utils::{format_bytes, debug_prelude},
   LocationID,
 };
 
@@ -69,7 +69,7 @@ impl Swirl {
             "{} Receiving file into: {:?}, size: {}",
             debug_prelude(&orchestra.self_name(), None),
             full_path,
-            data_size(size)
+            format_bytes(size)
           );
 
           let file = tokio::fs::File::create(&full_path)
@@ -82,7 +82,7 @@ impl Swirl {
             "{} Received file: {:?}, size: {}",
             debug_prelude(&orchestra.self_name(), None),
             full_path,
-            data_size(size)
+            format_bytes(size)
           );
 
           port_data.set(PortData::File(full_path.to_str().unwrap().to_string())).await;
