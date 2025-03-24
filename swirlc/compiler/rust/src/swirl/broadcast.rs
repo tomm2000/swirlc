@@ -12,12 +12,15 @@ impl Swirl {
     self: &Arc<Self>,
     port_id: PortID,
     destinations: Vec<String>,
-    join_set: JoinSet<()>,
+    mut join_set: JoinSet<()>,
   ) -> JoinSet<()> {
     let destinations = destinations
       .iter()
       .map(|d| self.orchestra.location_id(d))
       .collect::<Vec<LocationID>>();
+
+    let location = self.orchestra.location;
+    let location = self.orchestra.location_name(location);
 
     let port = self.ports.get(&port_id).expect("port not found");
 
@@ -30,40 +33,59 @@ impl Swirl {
 
     match data {
       PortData::File(path) => {
-        let file = tokio::fs::File::options()
-          .read(true)
-          .open(&path)
-          .await
-          .expect(format!("failed to open file: {:?}", path).as_str());
+        let swirl = self.clone();
 
-        let file_size = file.metadata().await.unwrap().len() as usize;
+        let required_permits = 1 + destinations.len() as u32;
 
-        let file_name = PathBuf::from(&path)
-          .file_name()
-          .expect("failed to get file name")
-          .to_str().unwrap().to_string();
+        join_set.spawn(async move {
+          let permit = swirl.connection_limit.acquire_many(required_permits).await;
 
-        let header_data = PortData::File(file_name);
-        let header_data = bincode::serialize(&header_data).unwrap();
-        let header_data = Bytes::from(header_data);
+          let file_name = PathBuf::from(&path)
+            .file_name()
+            .expect("failed to get file name")
+            .to_str()
+            .unwrap()
+            .to_string();
 
-        let reader = BufReader::new(file);
+          let task = swirl.amdahline.begin_task(&location, &format!("broadcast file {}", file_name));
 
-        let join_set = self.orchestra.broadcast_joinset(
-          destinations,
-          port_id,
-          reader,
-          header_data,
-          file_size,
-          join_set
-        );
+          let file = tokio::fs::File::options()
+            .read(true)
+            .open(&path)
+            .await
+            .expect(format!("failed to open file: {:?}", path).as_str());
 
-        println!("{} Completed broadcast of file data", debug_prelude(&self.orchestra.self_name(), None));
+          let file_size = file.metadata().await.unwrap().len() as usize;
+
+
+          let header_data = PortData::File(file_name);
+          let header_data = bincode::serialize(&header_data).unwrap();
+          let header_data = Bytes::from(header_data);
+
+          let reader = BufReader::new(file);
+
+          swirl
+            .orchestra
+            .broadcast_blocking(destinations, port_id, reader, header_data, file_size)
+            .await;
+
+          println!(
+            "{} Completed broadcast of file data",
+            debug_prelude(&swirl.orchestra.self_name(), None)
+          );
+
+          swirl.amdahline.end_task(&location, task);
+
+          drop(permit);
+        });
 
         return join_set;
       }
       PortData::Empty => {
-        println!("{} PANIC: empty data", debug_prelude(&self.orchestra.self_name(), None));
+        println!(
+          "{} PANIC: empty data",
+          debug_prelude(&self.orchestra.self_name(), None)
+        );
         panic!("empty data");
       }
       data => {
@@ -76,10 +98,13 @@ impl Swirl {
           tokio::io::empty(),
           Bytes::from(data),
           data_size,
-          join_set
+          join_set,
         );
 
-        println!("{} Completed broadcast of data", debug_prelude(&self.orchestra.self_name(), None));
+        println!(
+          "{} Completed broadcast of data",
+          debug_prelude(&self.orchestra.self_name(), None)
+        );
 
         return join_set;
       }

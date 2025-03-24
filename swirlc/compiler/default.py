@@ -38,7 +38,7 @@ import uuid
 
 from io import BytesIO
 from pathlib import Path
-from threading import Condition, Event, Thread
+from threading import Condition, Event, Thread, Semaphore
 from typing import Any, MutableMapping, MutableSequence
 """
 
@@ -63,6 +63,8 @@ defaultStreamHandler.setFormatter(formatter)
 logger.addHandler(defaultStreamHandler)
 logger.setLevel(logging.DEBUG)
 logger.propagate = False
+
+file_limit = Semaphore(32)
 """
 
 accept_function = """def _accept(sock: socket):
@@ -145,6 +147,7 @@ init_dataset_function = """def _init_dataset(port_name: str, data: str):
 """
 
 send_function = """def _send(port: str, data_type: str, src: str, dst: str):
+    file_limit.acquire()
     while True:
         try:
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
@@ -173,13 +176,14 @@ send_function = """def _send(port: str, data_type: str, src: str, dst: str):
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Sent data for port {port} to location {dst}")
     sock.close()
+    file_limit.release()
 """
 
 recv_function = """def _recv(port: str, workdir: str, data_type: str, src: str) -> Any:
     buf = BytesIO()
     with condition:
         while connections.setdefault(src, {}).get(port) is None:
-            logger.debug(f"Waiting connection for port {port} from location {src}")
+            # logger.debug(f"Waiting connection for port {port} from location {src}")
             condition.wait()
     if logger.isEnabledFor(logging.DEBUG):
         logger.debug(f"Received connection for port {port} from location {src}")
@@ -344,22 +348,6 @@ class DefaultTarget(BaseCompiler):
     global stopping
     stopping = True"""
         )
-#         locations = ",\n".join(
-#             [
-#                 f"\t'{name}': ('{location.hostname}', {location.port})"
-#                 for name, location in self.workflow.locations.items()
-#             ]
-#         )
-#         self.programs[self.current_location.name].write(
-#             f"""
-# locations = {{
-# {locations}
-# }}
-# """
-        # )
-
-
-
 
         self.programs[self.current_location.name].write(
             """

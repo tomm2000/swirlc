@@ -9,7 +9,7 @@ use config::PORTS;
 use serde::{Deserialize, Serialize};
 use tokio::sync::{Notify, RwLock};
 
-use crate::orchestra::{LocationInfo, Orchestra};
+use crate::{amdahline::Amdahline, orchestra::{LocationInfo, Orchestra}};
 
 // TODO: port id should be an enum
 pub type PortID = String;
@@ -88,6 +88,8 @@ pub struct Swirl {
   ports: Arc<HashMap<PortID, Port>>,
   orchestra: Arc<Orchestra>,
   workdir: PathBuf,
+  connection_limit: Arc<tokio::sync::Semaphore>,
+  pub amdahline: Arc<Amdahline>
 }
 
 impl Swirl {
@@ -109,14 +111,16 @@ impl Swirl {
       );
     }
 
-    let orchestra = Arc::new(Orchestra::new(location, address_map));
+    let orchestra = Arc::new(Orchestra::new(location.clone(), address_map));
 
     orchestra.accept_connections();
 
     Swirl {
       orchestra,
       ports: Arc::new(ports),
-      workdir
+      workdir,
+      connection_limit: Arc::new(tokio::sync::Semaphore::new(128)),
+      amdahline: Arc::new(Amdahline::new(format!("amdahline/{}.log", location))),
     }
   }
 

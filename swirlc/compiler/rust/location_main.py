@@ -28,13 +28,15 @@ pub async fn {location.name}(location: String, address_map: HashMap<String, Loca
   let start = std::time::Instant::now();
 
   let swirl = Arc::new(Swirl::new(location.clone(), address_map, "/workdir/{location.name}".into()));
+  swirl.amdahline.register_executor(&"{location.name}".to_string());
 """)
-        
+
 def close_location_file(file, location: Location, workflow: DistributedWorkflow):
     with open(file, "a") as f:
         f.write(
 f"""\n
   println!("{location.name} finished in {{:?}}", start.elapsed());
+  swirl.amdahline.unregister_executor(&"{location.name}".to_string());
 //  ===================== end of location {location.name} =====================
 }}
 """)

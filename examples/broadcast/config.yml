@@ -403,7 +403,303 @@ locations:
     workdir: /workdir
 
 dependencies:
+  d0:
+    type: file
+    value: /data/file0.txt
   d1:
     type: file
-    value: /data/message.txt
-    
+    value: /data/file1.txt
+  d2:
+    type: file
+    value: /data/file2.txt
+  d3:
+    type: file
+    value: /data/file3.txt
+  d4:
+    type: file
+    value: /data/file4.txt
+  d5:
+    type: file
+    value: /data/file5.txt
+  d6:
+    type: file
+    value: /data/file6.txt
+  d7:
+    type: file
+    value: /data/file7.txt
+  d8:
+    type: file
+    value: /data/file8.txt
+  d9:
+    type: file
+    value: /data/file9.txt
+  d10:
+    type: file
+    value: /data/file10.txt
+  d11:
+    type: file
+    value: /data/file11.txt
+  d12:
+    type: file
+    value: /data/file12.txt
+  d13:
+    type: file
+    value: /data/file13.txt
+  d14:
+    type: file
+    value: /data/file14.txt
+  d15:
+    type: file
+    value: /data/file15.txt
+  d16:
+    type: file
+    value: /data/file16.txt
+  d17:
+    type: file
+    value: /data/file17.txt
+  d18:
+    type: file
+    value: /data/file18.txt
+  d19:
+    type: file
+    value: /data/file19.txt
+  d20:
+    type: file
+    value: /data/file20.txt
+  d21:
+    type: file
+    value: /data/file21.txt
+  d22:
+    type: file
+    value: /data/file22.txt
+  d23:
+    type: file
+    value: /data/file23.txt
+  d24:
+    type: file
+    value: /data/file24.txt
+  d25:
+    type: file
+    value: /data/file25.txt
+  d26:
+    type: file
+    value: /data/file26.txt
+  d27:
+    type: file
+    value: /data/file27.txt
+  d28:
+    type: file
+    value: /data/file28.txt
+  d29:
+    type: file
+    value: /data/file29.txt
+  d30:
+    type: file
+    value: /data/file30.txt
+  d31:
+    type: file
+    value: /data/file31.txt
+  d32:
+    type: file
+    value: /data/file32.txt
+  d33:
+    type: file
+    value: /data/file33.txt
+  d34:
+    type: file
+    value: /data/file34.txt
+  d35:
+    type: file
+    value: /data/file35.txt
+  d36:
+    type: file
+    value: /data/file36.txt
+  d37:
+    type: file
+    value: /data/file37.txt
+  d38:
+    type: file
+    value: /data/file38.txt
+  d39:
+    type: file
+    value: /data/file39.txt
+  d40:
+    type: file
+    value: /data/file40.txt
+  d41:
+    type: file
+    value: /data/file41.txt
+  d42:
+    type: file
+    value: /data/file42.txt
+  d43:
+    type: file
+    value: /data/file43.txt
+  d44:
+    type: file
+    value: /data/file44.txt
+  d45:
+    type: file
+    value: /data/file45.txt
+  d46:
+    type: file
+    value: /data/file46.txt
+  d47:
+    type: file
+    value: /data/file47.txt
+  d48:
+    type: file
+    value: /data/file48.txt
+  d49:
+    type: file
+    value: /data/file49.txt
+  d50:
+    type: file
+    value: /data/file50.txt
+  d51:
+    type: file
+    value: /data/file51.txt
+  d52:
+    type: file
+    value: /data/file52.txt
+  d53:
+    type: file
+    value: /data/file53.txt
+  d54:
+    type: file
+    value: /data/file54.txt
+  d55:
+    type: file
+    value: /data/file55.txt
+  d56:
+    type: file
+    value: /data/file56.txt
+  d57:
+    type: file
+    value: /data/file57.txt
+  d58:
+    type: file
+    value: /data/file58.txt
+  d59:
+    type: file
+    value: /data/file59.txt
+  d60:
+    type: file
+    value: /data/file60.txt
+  d61:
+    type: file
+    value: /data/file61.txt
+  d62:
+    type: file
+    value: /data/file62.txt
+  d63:
+    type: file
+    value: /data/file63.txt
+  d64:
+    type: file
+    value: /data/file64.txt
+  d65:
+    type: file
+    value: /data/file65.txt
+  d66:
+    type: file
+    value: /data/file66.txt
+  d67:
+    type: file
+    value: /data/file67.txt
+  d68:
+    type: file
+    value: /data/file68.txt
+  d69:
+    type: file
+    value: /data/file69.txt
+  d70:
+    type: file
+    value: /data/file70.txt
+  d71:
+    type: file
+    value: /data/file71.txt
+  d72:
+    type: file
+    value: /data/file72.txt
+  d73:
+    type: file
+    value: /data/file73.txt
+  d74:
+    type: file
+    value: /data/file74.txt
+  d75:
+    type: file
+    value: /data/file75.txt
+  d76:
+    type: file
+    value: /data/file76.txt
+  d77:
+    type: file
+    value: /data/file77.txt
+  d78:
+    type: file
+    value: /data/file78.txt
+  d79:
+    type: file
+    value: /data/file79.txt
+  d80:
+    type: file
+    value: /data/file80.txt
+  d81:
+    type: file
+    value: /data/file81.txt
+  d82:
+    type: file
+    value: /data/file82.txt
+  d83:
+    type: file
+    value: /data/file83.txt
+  d84:
+    type: file
+    value: /data/file84.txt
+  d85:
+    type: file
+    value: /data/file85.txt
+  d86:
+    type: file
+    value: /data/file86.txt
+  d87:
+    type: file
+    value: /data/file87.txt
+  d88:
+    type: file
+    value: /data/file88.txt
+  d89:
+    type: file
+    value: /data/file89.txt
+  d90:
+    type: file
+    value: /data/file90.txt
+  d91:
+    type: file
+    value: /data/file91.txt
+  d92:
+    type: file
+    value: /data/file92.txt
+  d93:
+    type: file
+    value: /data/file93.txt
+  d94:
+    type: file
+    value: /data/file94.txt
+  d95:
+    type: file
+    value: /data/file95.txt
+  d96:
+    type: file
+    value: /data/file96.txt
+  d97:
+    type: file
+    value: /data/file97.txt
+  d98:
+    type: file
+    value: /data/file98.txt
+  d99:
+    type: file
+    value: /data/file99.txt

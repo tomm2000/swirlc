@@ -1,10 +1,10 @@
-use std::sync::Arc;
+use std::{path::PathBuf, sync::Arc};
 
 use tokio::task::JoinSet;
 
 use crate::orchestra::{
   self,
-  utils::{data_size, debug_prelude},
+  utils::{format_bytes, debug_prelude},
   LocationID,
 };
 
@@ -27,6 +27,8 @@ impl Swirl {
     let swirl = self.clone();
     let orchestra = self.orchestra.clone();
     let sender = orchestra.location_id(&sender);
+    let location = orchestra.location;
+    let location = orchestra.location_name(location);
 
     // clear the existing value
     self
@@ -39,11 +41,11 @@ impl Swirl {
     join_set.spawn(async move {
       let received = orchestra.receive_blocking(sender, port_id.clone()).await;
 
-      println!(
-        "{} Receiving message from {}",
-        debug_prelude(&orchestra.self_name(), None),
-        sender
-      );
+      // println!(
+      //   "{} Receiving message from {}",
+      //   debug_prelude(&orchestra.self_name(), None),
+      //   sender
+      // );
 
       let received_port: PortData = bincode::deserialize(&received.header.header_data)
         .expect("failed to deserialize header data");
@@ -55,9 +57,17 @@ impl Swirl {
           panic!("PortData::Empty should not be received");
         }
         PortData::File(file_path) => {
+          let file_name = PathBuf::from(&file_path)
+            .file_name()
+            .expect("failed to get file name")
+            .to_str().unwrap().to_string();
+
+          let task = swirl.amdahline.begin_task(&location, &format!("receive file {}", file_name));
+
           let path = swirl.workdir.join(format!(
-            "receive_{}",
-            orchestra.location_name(orchestra.location)
+            "receive_{}_from_{}",
+            orchestra.location_name(orchestra.location),
+            orchestra.location_name(sender)
           ));
           let size = received.header.size;
 
@@ -69,7 +79,7 @@ impl Swirl {
             "{} Receiving file into: {:?}, size: {}",
             debug_prelude(&orchestra.self_name(), None),
             full_path,
-            data_size(size)
+            format_bytes(size)
           );
 
           let file = tokio::fs::File::create(&full_path)
@@ -82,11 +92,13 @@ impl Swirl {
             "{} Received file: {:?}, size: {}",
             debug_prelude(&orchestra.self_name(), None),
             full_path,
-            data_size(size)
+            format_bytes(size)
           );
 
           port_data.set(PortData::File(full_path.to_str().unwrap().to_string())).await;
           port_data.port_ready.notify_waiters();
+
+          swirl.amdahline.end_task(&location, task);
         }
         _ => {
           port_data.set(received_port.clone()).await;

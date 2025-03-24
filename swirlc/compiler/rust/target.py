@@ -34,7 +34,8 @@ class ThreadStack:
         self.stack.append(0)
 
     def pop_group(self) -> int:
-        return self.stack.pop()
+        t = self.stack.pop()
+        return t
     
     def clear_group(self) -> None:
         self.stack[-1] = 0
@@ -103,10 +104,13 @@ class RustTarget(BaseCompiler):
         # assert that there is only 1 group left (the main group)
         assert self.thread_stack.len() == 1
 
+        program = self.programs[self.current_location.name]
+
+        if ENABLE_BROADCAST: self.empty_broadcast_stack()
+
         self.wait_thread_group()
         self.thread_stack.pop_group()
-
-        program = self.programs[self.current_location.name]
+        
         program.close()
 
         close_location_file(f"{self.output_dir}/src/locations/{self.current_location.name}.rs", self.current_location, self.workflow)
@@ -240,8 +244,7 @@ f"""
             self.refresh_join_set()
             self.thread_stack.add_thread()
             program.write(f"""
-{self.get_indent()}join_set = swirl.send("{port}".into(), "{dst}".into(), join_set).await;
-            """)
+{self.get_indent()}join_set = swirl.send("{port}".into(), "{dst}".into(), join_set).await;""")
 
     def empty_broadcast_stack(self):
         program = self.programs[self.current_location.name]
@@ -260,9 +263,7 @@ f"""
             if len(destinations) == 1:
                 program.write(
                     f"""
-{self.get_indent()}join_set = swirl.send("{port}".into(), "{destinations[0]}".into(), join_set).await;
-                    """
-                )
+{self.get_indent()}join_set = swirl.send("{port}".into(), "{destinations[0]}".into(), join_set).await;""")
 
             # if there are multiple destinations, use the broadcast method
             else:

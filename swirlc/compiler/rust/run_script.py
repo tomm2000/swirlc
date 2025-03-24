@@ -5,7 +5,7 @@ from typing import MutableSequence
 from swirlc.core.entity import Location
 from swirlc.version import VERSION
 
-MAX_NODES = 50
+MAX_NODES = 20
 CPUS_PER_NODE = 36
 
 def build_run_script(file, locations: MutableSequence[Location], env: str, build_mode: str, output_dir: str):
@@ -103,9 +103,6 @@ wait
 
         if command:
           execution_commands_str += f"{command} &\n"
-
-      
-
 
       f.write(
   f'''#!/bin/bash

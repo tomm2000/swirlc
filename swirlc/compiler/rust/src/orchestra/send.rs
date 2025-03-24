@@ -1,7 +1,7 @@
-use crate::orchestra::{utils::debug_prelude, MessageHeader, RelayTag, MESSAGE_HEADER_SIZE};
+use crate::orchestra::{utils::{debug_prelude, format_bytes}, MessageHeader, RelayInstruction, MESSAGE_HEADER_SIZE};
 use super::{LocationID, Orchestra};
 
-use std::sync::Arc;
+use std::{sync::Arc, vec};
 
 use bytes::Bytes;
 use tokio::{io::{AsyncReadExt, AsyncWriteExt, BufReader, BufWriter}, net::TcpStream, task::{JoinHandle, JoinSet}};
@@ -28,15 +28,23 @@ impl Orchestra {
 
     let mut stream;
 
+    let start = std::time::Instant::now();
     while {
       stream = TcpStream::connect(&location_info.address).await;
       stream.is_err()
     } {
       tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
+    // println!(
+    //   "{} connected to {:?} in {:?}",
+    //   debug_prelude(&self.location, None),
+    //   &destination,
+    //   start.elapsed()
+    // );
 
     let stream = stream.unwrap();
-    let mut writer = BufWriter::new(stream);
+    let mut writer = BufWriter::with_capacity(1024*1024*64, stream);
+    // let mut writer = BufWriter::new(stream);
 
     // === Write message header ===
     let message_header = MessageHeader {
@@ -44,7 +52,7 @@ impl Orchestra {
       origin,
       message_id,
       size: data_size,
-      relay_tag: RelayTag::Data(),
+      relay_tag: RelayInstruction::End,
       header_data: header_data.to_vec()
     };
 
@@ -66,10 +74,11 @@ impl Orchestra {
     writer.flush().await.expect("failed to flush message header");
 
     // === Write message data ===
-    let mut reader = BufReader::new(reader);
+    let mut reader = BufReader::with_capacity(1024*1024*64, reader);
     tokio::io::copy(&mut reader, &mut writer).await.expect("failed to copy message data");
 
     writer.flush().await.expect("failed to flush message data");
+    drop(reader);
   }
 
   /**

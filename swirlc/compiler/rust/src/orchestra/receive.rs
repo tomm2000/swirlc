@@ -1,10 +1,10 @@
 use std::sync::Arc;
 
-use super::{LocationID, Orchestra, RelayTag};
+use super::{LocationID, Orchestra, RelayInstruction};
 use crate::orchestra::MessageHeader;
 use bytes::Bytes;
 use tokio::{
-  io::{AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
+  io::{AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader, BufWriter},
   net::TcpStream,
   task::{JoinHandle, JoinSet},
 };
@@ -16,25 +16,30 @@ use tokio::{
  */
 pub struct PartialReceive {
   pub header: MessageHeader,
-  pub reader: BufReader<TcpStream>,
+  pub stream: TcpStream,
   orchestra: Arc<Orchestra>,
 }
 
 impl PartialReceive {
   // ==================== Receive into ====================
-  pub async fn collect_blocking_into<W>(mut self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
+  pub async fn collect_blocking_into<W>(self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
+    let buffer_size = self.header.size as usize;
+    let buffer_size = if buffer_size > 1024*1024*32 { 1024*1024*32 } else { buffer_size };
+
+    let mut reader = BufReader::with_capacity(buffer_size, self.stream);
+
     match self.header.relay_tag.clone() {
-      RelayTag::Data() => {
-        tokio::io::copy(&mut self.reader, &mut writer)
+      RelayInstruction::End => {
+        tokio::io::copy(&mut reader, &mut writer)
           .await
           .expect("failed to read message data");
       }
-      RelayTag::Relay(relay_instructions) => {
+      RelayInstruction::Relay(relay_instructions) => {
         let writer = self.orchestra
           .broadcast_relay(
             relay_instructions,
             self.header.message_id.clone(),
-            self.reader,
+            reader,
             Bytes::from(self.header.header_data.clone()),
             self.header.size,
             self.header.origin,
@@ -153,24 +158,25 @@ impl Orchestra {
     self: &Arc<Self>,
     sender: LocationID,
     message_id: String,
-  ) -> (MessageHeader, BufReader<TcpStream>) {
+  ) -> (MessageHeader, TcpStream) {
     loop {
       let incoming_messages = self.incoming_messages.read().await;
 
       if incoming_messages.contains_key(&(sender, message_id.clone())) {
         drop(incoming_messages);
 
-        let message = self
+        let (header, stream) = self
           .incoming_messages
           .write()
           .await
           .remove(&(sender, message_id))
           .unwrap();
 
-        return message;
+        return (header, stream);
       }
 
       drop(incoming_messages);
+      
       tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
   }
@@ -186,7 +192,7 @@ impl Orchestra {
   ) -> PartialReceive {
     let (header, reader) = self.fetch_message(sender, message_id).await;
 
-    PartialReceive { header, reader, orchestra: self.clone() }
+    PartialReceive { header, stream: reader, orchestra: self.clone() }
   }
 
   /**
