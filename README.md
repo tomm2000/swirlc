@@ -1,4 +1,4 @@
-# SWIRL-rs: A Rust execution target for the SWIRL, a Scientific Workflow Intermediate Representation Language.
+# SWIRL-rs: A Rust execution target for SWIRL, a Scientific Workflow Intermediate Representation Language.
 The original [repository](https://github.com/alpha-unito/swirlc)  contains a Python implementation for the swirlc toolchain. Swirlc includes a translator to generate SWIRL workflows from Pegasus DAX files and a compiler to generate a Python executable bundle from a SWIRL workflow. This fork extends the swirlc compiler to generate a Rust executable bundle instead of a Python one. The bulk of the changes are in the `swirlc/compiler/rust` folder, this includes the Rust library code (under `swirlc/compiler/rust/src`) and the python compiler scripts.
 
 ## Installation
