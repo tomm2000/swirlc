@@ -1,3 +1,15 @@
 location0,machine1,localhost:8080
-location1,machine2,localhost:8081
-location2,machine2,localhost:8082
+location1,machine1,localhost:8081
+location2,machine1,localhost:8082
+location3,machine2,localhost:8082
+location4,machine2,localhost:8082
+location5,machine2,localhost:8082
+location6,machine3,localhost:8082
+location7,machine3,localhost:8082
+location8,machine3,localhost:8082
+location9,machine4,localhost:8082
+location10,machine4,localhost:8082
+location11,machine4,localhost:8082
+location12,machine5,localhost:8082
+location13,machine5,localhost:8082
+location14,machine5,localhost:8082

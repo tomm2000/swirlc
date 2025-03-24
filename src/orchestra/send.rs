@@ -1,4 +1,4 @@
-use crate::orchestra::{utils::{debug_prelude, format_bytes}, MessageHeader, RelayTag, MESSAGE_HEADER_SIZE};
+use crate::orchestra::{utils::{debug_prelude, format_bytes}, MessageHeader, RelayInstruction, MESSAGE_HEADER_SIZE};
 use super::{LocationID, Orchestra};
 
 use std::{sync::Arc, vec};
@@ -28,12 +28,19 @@ impl Orchestra {
 
     let mut stream;
 
+    let start = std::time::Instant::now();
     while {
       stream = TcpStream::connect(&location_info.address).await;
       stream.is_err()
     } {
       tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
+    // println!(
+    //   "{} connected to {:?} in {:?}",
+    //   debug_prelude(&self.location, None),
+    //   &destination,
+    //   start.elapsed()
+    // );
 
     let stream = stream.unwrap();
     let mut writer = BufWriter::with_capacity(1024*1024*64, stream);
@@ -45,7 +52,7 @@ impl Orchestra {
       origin,
       message_id,
       size: data_size,
-      relay_tag: RelayTag::Data(),
+      relay_tag: RelayInstruction::End,
       header_data: header_data.to_vec()
     };
 
@@ -71,6 +78,7 @@ impl Orchestra {
     tokio::io::copy(&mut reader, &mut writer).await.expect("failed to copy message data");
 
     writer.flush().await.expect("failed to flush message data");
+    drop(reader);
   }
 
   /**

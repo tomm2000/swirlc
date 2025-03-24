@@ -3,7 +3,7 @@ use std::{path::PathBuf, sync::Arc};
 use bytes::Bytes;
 use tokio::task::JoinSet;
 
-use crate::orchestra::{utils::{format_bytes, debug_prelude}, LocationID};
+use crate::orchestra::{self, utils::{debug_prelude, format_bytes}, LocationID};
 
 use super::{PortData, PortID, Swirl};
 
@@ -12,9 +12,8 @@ impl Swirl {
     self: &Arc<Self>,
     port_id: PortID,
     destination: String,
-    join_set: JoinSet<()>,
+    mut join_set: JoinSet<()>,
   ) -> JoinSet<()> {
-
     let destination = self.orchestra.location_id(&destination);
 
     //============================ Copy Data ============================
@@ -28,37 +27,52 @@ impl Swirl {
     let data_read = port.value.read().await;
     let data = data_read.clone();
 
+    let location = self.orchestra.location;
+    let location = self.orchestra.location_name(location);
+
     drop(data_read);
 
     let handle = match data {
       PortData::File(path) => {
-        let file = tokio::fs::File::options()
-          .read(true)
-          .open(&path)
-          .await
-          .expect(format!("failed to open file: {:?}", path).as_str());
+        let swirl = self.clone();
 
-        let file_size = file.metadata().await.unwrap().len() as usize;
+        join_set.spawn(async move {
+          let permit = swirl.connection_limit.acquire_many(2).await.unwrap();
 
-        let file_name = PathBuf::from(&path)
-          .file_name()
-          .expect("failed to get file name")
-          .to_str().unwrap().to_string();
+          let file_name = PathBuf::from(&path)
+            .file_name()
+            .expect("failed to get file name")
+            .to_str().unwrap().to_string();
 
-        let header_data = PortData::File(file_name);
-        let header_data = bincode::serialize(&header_data).unwrap();
-        let header_data = Bytes::from(header_data);
+          let task = swirl.amdahline.begin_task(&location, &format!("send file {}", file_name));
 
-        println!("{} Sending file data to {}, size: {}", debug_prelude(&self.orchestra.self_name(), None), destination, format_bytes(file_size));
+          let file = tokio::fs::File::options()
+            .read(true)
+            .open(&path)
+            .await
+            .expect(format!("failed to open file: {:?}", path).as_str());
 
-        let join_set = self.orchestra.send_joinset(
-          destination,
-          port_id,
-          file,
-          header_data,
-          file_size,
-          join_set
-        );
+          let file_size = file.metadata().await.unwrap().len() as usize;
+
+          let header_data = PortData::File(file_name);
+          let header_data = bincode::serialize(&header_data).unwrap();
+          let header_data = Bytes::from(header_data);
+
+          println!("{} Sending file data to {}, size: {}", debug_prelude(&swirl.orchestra.self_name(), None), destination, format_bytes(file_size));
+
+          swirl.orchestra.blocking_send(
+            destination,
+            port_id,
+            file,
+            header_data,
+            file_size,
+            swirl.orchestra.location
+          ).await;
+
+          swirl.amdahline.end_task(&location, task);
+
+          drop(permit);
+        });
 
         return join_set;
       }
@@ -80,7 +94,6 @@ impl Swirl {
           size,
           join_set
         )
-
       }
     };
 

@@ -1,9 +1,9 @@
-use super::{LocationID, Orchestra, RelayInstruction, RelayTag};
+use super::{LocationID, Orchestra, RelayInstruction, RelayOptions};
 use crate::orchestra::{
   utils::debug_prelude, MessageHeader, MESSAGE_CHUNK_SIZE, MESSAGE_HEADER_SIZE,
 };
 
-use std::{collections::HashMap, sync::Arc, vec};
+use std::{collections::HashMap, hash::Hash, sync::Arc, vec};
 
 use bytes::Bytes;
 use tokio::{
@@ -15,55 +15,74 @@ use tokio::{
 // TODO: for the broadcasts, instead of passing a vector of destinations, create an Into<Destinations> trait
 
 /**
+ * **DEPRECATED: Use `destination_ntree_advanced` instead.**
  * Generates a `RelayTag` describing a naive broadcast pattern.
  * `NAIVE`: The broadcasting node sends directly to each destination node.
  */
-fn destinations_naive(destinations: Vec<LocationID>) -> RelayTag {
-  return RelayTag::Relay(
+#[deprecated]
+fn _destinations_naive(sender: LocationID, destinations: Vec<LocationID>) -> RelayInstruction {
+  return RelayInstruction::Relay(
     destinations
       .iter()
-      .map(|destination| RelayInstruction {
+      .map(|destination| RelayOptions {
+        sender,
         destination: destination.clone(),
-        tag: RelayTag::Data(),
+        relay_instruction: RelayInstruction::End,
       })
       .collect(),
   );
 }
 
 /**
+ * **DEPRECATED: Use `destination_ntree_advanced` instead.**
  * Generates a `RelayTag` describing a n-tree broadcast pattern.
  * `NTREE`: The broadcasting node sends to n nodes, each of which sends to n other nodes, and so on.
  */
-fn destinations_ntree(destinations: Vec<LocationID>, n: usize) -> RelayTag {
-  let mut parts = Vec::new();
+#[deprecated]
+fn _destinations_ntree(sender: LocationID, destinations: &Vec<LocationID>, n: usize) -> RelayInstruction {
+  let mut branches = Vec::new();
 
   for _ in 0..n {
-    parts.push(Vec::new());
+    branches.push(Vec::new());
   }
 
   for (i, destination) in destinations.iter().enumerate() {
-    parts[i % n].push(destination.clone());
+    branches[i % n].push(destination.clone());
   }
 
-  let mut destination_tags: Vec<RelayInstruction> = Vec::new();
+  let mut relay = Vec::new();
 
-  for part in parts.iter() {
-    if part.len() > 1 {
-      let tag = destinations_ntree(part[1..].to_vec(), n);
+  for branch in branches.iter() {
+    if branch.len() > 1 {
+      let node = branch[0].clone();
 
-      destination_tags.push(RelayInstruction {
-        destination: part[0].clone(),
-        tag,
+      let remaining_tree = branch[1..].to_vec();
+
+      // recursive instructions for the rest of the branch
+      let recursive_instruction = _destinations_ntree(
+        node,
+        &remaining_tree,
+        n
+      );
+
+      relay.push(RelayOptions {
+        sender,
+        destination: node,
+        relay_instruction: recursive_instruction,
       });
-    } else if part.len() == 1 {
-      destination_tags.push(RelayInstruction {
-        destination: part[0].clone(),
-        tag: RelayTag::Data(),
+      
+    } else if branch.len() == 1 {
+      let node = branch[0].clone();
+
+      relay.push(RelayOptions {
+        sender,
+        destination: node,
+        relay_instruction: RelayInstruction::End,
       });
     }
   }
 
-  RelayTag::Relay(destination_tags)
+  return RelayInstruction::Relay(relay);
 }
 
 /**
@@ -72,61 +91,96 @@ fn destinations_ntree(destinations: Vec<LocationID>, n: usize) -> RelayTag {
   the nodes are grouped per machine, and a master node is elected for each group. The broadcaster sends to each master node,
    and the master nodes send to the rest of the nodes in their group (following the ntree pattern).
 */
-fn destination_ntree_advanced(node: LocationID, destinations: Vec<LocationID>, orchestra: &Orchestra) -> RelayTag {
-  // println!("broadcasting from node: {:?}", node);
+pub fn destinations_ntree_advanced(sender: LocationID, destinations: Vec<LocationID>, orchestra: &Orchestra) -> RelayInstruction {
+  let master_machine = orchestra.location_info(sender).machine;
 
-  let master_machine = orchestra
-    .addresses
-    .get(&node)
-    .expect(format!("<Orchestra> unknown node: {:?}", node).as_str())
-    .machine
-    .clone();
+  let mut machine_groups: HashMap<String, Vec<LocationID>> = HashMap::new();
 
-  // println!("machine: {:?}", master_machine);
+  machine_groups.insert(master_machine.clone(), vec![sender]);
 
-  let mut slaves: Vec<LocationID> = Vec::new();
-
-  // find the locations on the same machine as node, and remove node from the list
-  let other_destinations = destinations.iter().filter(|destination| {
-    let location_info = orchestra
-      .addresses
-      .get(destination)
-      .expect(format!("<Orchestra> unknown destination: {:?}", destination).as_str());
-    let machine = location_info.machine.clone();
-
-    if master_machine == machine {
-      slaves.push((*destination).clone());
-      return false;
+  for destination in destinations {
+    let machine = orchestra.location_info(destination).machine;
+    
+    if machine_groups.contains_key(&machine) {
+      machine_groups.get_mut(&machine).unwrap().push(destination);
+    } else {
+      machine_groups.insert(machine, vec![destination]);
     }
-
-    return true;
-  }).map(|id| id.clone()).collect::<Vec<LocationID>>();
-
-  // println!("slaves: {:?}, other_destinations: {:?}", slaves, other_destinations);
-
-  let mut slave_instructions: Vec<RelayInstruction> = slaves.iter().map(|destination| {
-    RelayInstruction {
-      destination: destination.clone(),
-      tag: RelayTag::Data(),
-    }
-  }).collect();
-
-  if other_destinations.len() == 0 {
-    return RelayTag::Relay(slave_instructions);
   }
 
-  // if there are more destinations, find the next node to send to
-  let next_node = other_destinations[0].clone();
-  let other_destinations = other_destinations[1..].to_vec();
-  let next_tag = destination_ntree_advanced(next_node.clone(), other_destinations, orchestra);
+  // first node of each group is the master node
+  let masters: Vec<LocationID> = machine_groups.iter().map(|(_, destinations)| {
+    destinations[0].clone()
+  }).collect();
 
-  slave_instructions.push(RelayInstruction {
-    destination: next_node.clone(),
-    tag: next_tag
-  });
 
-  return RelayTag::Relay(slave_instructions);
+  let slaves: HashMap<LocationID, Vec<LocationID>> = machine_groups.iter().map(|(_, destinations)| {
+    let slaves = destinations[1..].to_vec();
+    (destinations[0].clone(), slaves)
+  }).collect();
+
+  // remove sender from destinations
+  let destinations: Vec<LocationID> = masters.into_iter().filter(|destination| *destination != sender).collect();
+  let tree = destination_ntree_advanced_support(sender, &destinations, slaves, 2);
+
+  return tree;
 }
+
+/**
+ * Recursive support function to generate the advanced ntree pattern. See `destinations_ntree_advanced`.
+ */
+fn destination_ntree_advanced_support(sender: LocationID, destinations: &Vec<LocationID>, slaves: HashMap<LocationID, Vec<LocationID>>, n: usize) -> RelayInstruction {
+  let mut branches: Vec<Vec<LocationID>> = vec![Vec::new(); n];
+
+  for (i, destination) in destinations.iter().enumerate() {
+    branches[i % n].push(destination.clone());
+  }
+
+  // remove empty branches
+  branches = branches.into_iter().filter(|branch| branch.len() > 0).collect();
+
+  let mut relay_options = Vec::new();
+
+  for branch in branches.iter() {
+    let node = branch[0].clone();
+
+    let remaining_tree = if branch.len() > 1 {
+      branch[1..].to_vec()
+    } else {
+      Vec::new()
+    };
+
+    // recursive instructions for the rest of the branch
+    let recursive_instruction = destination_ntree_advanced_support(
+      node,
+      &remaining_tree,
+      slaves.clone(),
+      n
+    );
+
+    relay_options.push(RelayOptions {
+      sender,
+      destination: node,
+      relay_instruction: recursive_instruction,
+    });
+  }
+
+  // add the slave destinations
+  if slaves.contains_key(&sender) {
+    let slave_destinations = slaves.get(&sender).unwrap();
+
+    for destination in slave_destinations {
+      relay_options.push(RelayOptions {
+        sender,
+        destination: destination.clone(),
+        relay_instruction: RelayInstruction::End,
+      });
+    }
+  }
+
+  return RelayInstruction::Relay(relay_options);
+}
+
 
 impl Orchestra {
   /**
@@ -147,7 +201,7 @@ impl Orchestra {
   {
     // let instructions = destinations_naive(destinations);
     // let instructions = destinations_ntree(destinations, 2);
-    let instructions = destination_ntree_advanced(self.location.clone(), destinations, self);
+    let instructions = destinations_ntree_advanced(self.location.clone(), destinations, self);
 
     // println!(
     //   "{} Broadcasting message to {}",
@@ -156,7 +210,7 @@ impl Orchestra {
     // );
 
     match instructions {
-      RelayTag::Relay(relay_instructions) => {
+      RelayInstruction::Relay(relay_instructions) => {
         self
           .broadcast_relay(
             relay_instructions,
@@ -169,7 +223,7 @@ impl Orchestra {
           )
           .await;
       }
-      RelayTag::Data() => {
+      RelayInstruction::End => {
         panic!(
           "{} PANIC: no destinations",
           debug_prelude(&self.self_name(), None)
@@ -241,7 +295,7 @@ impl Orchestra {
    */
   pub async fn broadcast_relay<R, W>(
     &self,
-    relay_instructions: Vec<RelayInstruction>,
+    relay_instructions: Vec<RelayOptions>,
     id: String,
     mut reader: R,
     header_data: Bytes,
@@ -254,7 +308,7 @@ impl Orchestra {
     W: AsyncWrite + Unpin + Send + 'static,
   {
     // ========= collect the addresses of the destinations =========
-    let mut address_relay: Vec<(String, RelayTag)> = Vec::new();
+    let mut address_relay: Vec<(String, RelayInstruction)> = Vec::new();
 
     for instruction in relay_instructions {
       let location_info = self.addresses.get(&instruction.destination).expect(
@@ -264,7 +318,7 @@ impl Orchestra {
         )
         .as_str(),
       );
-      address_relay.push((location_info.address.clone(), instruction.tag));
+      address_relay.push((location_info.address.clone(), instruction.relay_instruction));
     }
 
     // ========= connect to the destinations =========

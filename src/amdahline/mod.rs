@@ -6,6 +6,9 @@ pub struct Amdahline {
 
 impl Amdahline {
   pub fn new(output_file: String) -> Self {
+    // create the folder if it doesn't exist
+    std::fs::create_dir_all(std::path::Path::new(&output_file).parent().unwrap()).unwrap();
+
     // create the output file
     std::fs::File::create(&output_file).unwrap();
 
@@ -24,7 +27,7 @@ impl Amdahline {
     drop(self.writer.write().unwrap());
   }
 
-  pub fn register_executor(&self, executor_id: String) {
+  pub fn register_executor(&self, executor_id: &String) {
     let write = self.writer.write();
 
     let time = chrono::Local::now().format("%H:%M:%S:%f").to_string();
@@ -33,7 +36,7 @@ impl Amdahline {
     write.unwrap().write_all(message.as_bytes()).unwrap();
   }
 
-  pub fn unregister_executor(&self, executor_id: String) {
+  pub fn unregister_executor(&self, executor_id: &String) {
     let write = self.writer.write();
 
     let time = chrono::Local::now().format("%H:%M:%S:%f").to_string();
@@ -42,7 +45,7 @@ impl Amdahline {
     write.unwrap().write_all(message.as_bytes()).unwrap();
   }
 
-  pub fn begin_task(&self, executor_id: String, task: String) -> uuid::Uuid {
+  pub fn begin_task(&self, executor_id: &String, task: &String) -> uuid::Uuid {
     let write = self.writer.write();
 
     let uuid: uuid::Uuid = uuid::Uuid::new_v4();
@@ -55,7 +58,7 @@ impl Amdahline {
     uuid
   }
 
-  pub fn end_task(&self, executor_id: String, uuid: uuid::Uuid) {
+  pub fn end_task(&self, executor_id: &String, uuid: uuid::Uuid) {
     let write = self.writer.write();
 
     let time = chrono::Local::now().format("%H:%M:%S:%f").to_string();

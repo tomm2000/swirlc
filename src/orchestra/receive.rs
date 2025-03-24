@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use super::{LocationID, Orchestra, RelayTag};
+use super::{LocationID, Orchestra, RelayInstruction};
 use crate::orchestra::MessageHeader;
 use bytes::Bytes;
 use tokio::{
@@ -23,15 +23,18 @@ pub struct PartialReceive {
 impl PartialReceive {
   // ==================== Receive into ====================
   pub async fn collect_blocking_into<W>(self, mut writer: W) -> W where W: AsyncWrite + Unpin + Send + 'static {
-    let mut reader = BufReader::with_capacity(1024*1024*32, self.stream);
+    let buffer_size = self.header.size as usize;
+    let buffer_size = if buffer_size > 1024*1024*32 { 1024*1024*32 } else { buffer_size };
+
+    let mut reader = BufReader::with_capacity(buffer_size, self.stream);
 
     match self.header.relay_tag.clone() {
-      RelayTag::Data() => {
+      RelayInstruction::End => {
         tokio::io::copy(&mut reader, &mut writer)
           .await
           .expect("failed to read message data");
       }
-      RelayTag::Relay(relay_instructions) => {
+      RelayInstruction::Relay(relay_instructions) => {
         let writer = self.orchestra
           .broadcast_relay(
             relay_instructions,
@@ -173,6 +176,7 @@ impl Orchestra {
       }
 
       drop(incoming_messages);
+      
       tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
     }
   }

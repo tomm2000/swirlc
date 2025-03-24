@@ -1,6 +1,6 @@
 use std::{ops::Deref, path::PathBuf};
 
-use crate::{orchestra::utils::{self, debug_prelude, execute_command}, swirl::PortData};
+use crate::{orchestra::utils::{self, debug_prelude}, swirl::{PortData}};
 
 use super::{PortID, StepArgument, StepOutput, Swirl};
 
@@ -114,6 +114,10 @@ impl Swirl {
       cmd,
       arguments.join(" ")
     );
+
+    let location = self.orchestra.location;
+    let location  = self.orchestra.location_name(location);
+    let task = self.amdahline.begin_task(&location, &step_display_name);
   
     let (output, status) = match output_type {
       StepOutput::Stdout => {
@@ -206,6 +210,6 @@ impl Swirl {
       }
     }
   
-    // self.amdahline.end_task(format!("{:?}", self.location), t);
+    self.amdahline.end_task(&location, task);
   }
 }

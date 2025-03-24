@@ -3,7 +3,7 @@ pub mod receive;
 pub mod send;
 pub mod utils;
 
-use std::{collections::HashMap, io::Read, sync::Arc, thread};
+use std::{collections::HashMap, io::Read, net::{SocketAddr, SocketAddrV4}, str::FromStr, sync::Arc, task, thread};
 
 use tokio::{
   io::{AsyncReadExt, BufReader},
@@ -12,21 +12,22 @@ use tokio::{
 };
 use utils::debug_prelude;
 
-const MESSAGE_HEADER_SIZE: usize = 1024;
+const MESSAGE_HEADER_SIZE: usize = 1024 * 2;
 const MESSAGE_CHUNK_SIZE: usize = 8 * 1024 * 1024;
 
 pub type LocationID = u16;
 
 #[derive(serde::Serialize, serde::Deserialize, Hash, Eq, PartialEq, Debug, Clone)]
-pub enum RelayTag {
-  Data(), // receiving a relay tag of data means the current node is the end of the tree, and should NOT relay the message further
-  Relay(Vec<RelayInstruction>), // receiving a relay tag means the current node should relay the message to the destinations in the instructions
+pub enum RelayInstruction {
+  Relay(Vec<RelayOptions>),
+  End,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Hash, Eq, PartialEq, Debug, Clone)]
-pub struct RelayInstruction {
-  destination: LocationID,
-  tag: RelayTag,
+pub struct RelayOptions {
+  pub sender: LocationID,
+  pub destination: LocationID,
+  pub relay_instruction: RelayInstruction,
 }
 
 #[derive(serde::Serialize, serde::Deserialize, Hash, Eq, PartialEq, Debug, Clone)]
@@ -35,20 +36,20 @@ pub struct LocationInfo {
   pub machine: String,
 }
 
-impl RelayTag {
-  fn display(&self, orchestra: &Orchestra) -> String {
+impl RelayInstruction {
+  pub fn display(&self, orchestra: &Orchestra) -> String {
     self.display_with_indent(orchestra, 0)
   }
 
   // Helper function to handle indentation
-  fn display_with_indent(&self, orchestra: &Orchestra, indent: usize) -> String {
+  pub fn display_with_indent(&self, orchestra: &Orchestra, indent: usize) -> String {
     let indent_str = "  ".repeat(indent);
 
     match self {
-      RelayTag::Data() => {
-        format!("{}Data", indent_str)
+      RelayInstruction::End => {
+        format!("{}End", indent_str)
       }
-      RelayTag::Relay(instructions) => {
+      RelayInstruction::Relay(instructions) => {
         let mut result = format!("{}Relay\n", indent_str);
 
         for instruction in instructions {
@@ -59,7 +60,7 @@ impl RelayTag {
           result.push_str(&format!("{}| → to {}\n", "  ".repeat(indent), dest_name));
 
           // Recursively display nested tree
-          result.push_str(&instruction.tag.display_with_indent(orchestra, indent + 1));
+          result.push_str(&instruction.relay_instruction.display_with_indent(orchestra, indent + 1));
 
           // Add newline between instructions unless it's the last one
           if instruction != instructions.last().unwrap() {
@@ -73,6 +74,7 @@ impl RelayTag {
   }
 }
 
+
 #[derive(serde::Serialize, serde::Deserialize, Hash, Eq, PartialEq, Debug)]
 pub struct MessageHeader {
   pub sender: LocationID,
@@ -80,7 +82,7 @@ pub struct MessageHeader {
   pub message_id: String,
   pub header_data: Vec<u8>,
   pub size: usize,
-  pub relay_tag: RelayTag,
+  pub relay_tag: RelayInstruction,
 }
 
 pub struct Orchestra {
@@ -186,35 +188,49 @@ impl Orchestra {
       );
 
       loop {
-        let (mut stream, _) = listener
+        let (stream, _) = listener
           .accept()
           .await
           .expect("failed to accept connection");
 
-        let mut buffer = vec![0; MESSAGE_HEADER_SIZE];
-        stream
-          .read_exact(&mut buffer)
-          .await
-          .expect("failed to read message");
+        tokio::spawn({
+          let orchestra = orchestra.clone();
 
-        let message_header: MessageHeader = bincode::deserialize(&buffer).unwrap();
-
-        println!(
-          "{} Received message (tag: {:?}) from {:?} origin {:?}",
-          debug_prelude(&orchestra.self_name(), None),
-          message_header.relay_tag,
-          message_header.sender,
-          message_header.origin
-        );
-
-        orchestra.incoming_messages.write().await.insert(
-          (
-            message_header.origin.clone(),
-            message_header.message_id.clone(),
-          ),
-          (message_header, stream),
-        );
+          async move {
+            Self::handle_connection(orchestra, stream).await;
+          }
+        });
       }
     })
+  }
+
+  async fn handle_connection(orchestra: Arc<Self>, mut stream: TcpStream) {
+    let mut buffer = vec![0; MESSAGE_HEADER_SIZE];
+    stream
+      .read_exact(&mut buffer)
+      .await
+      .expect("failed to read message");
+
+    let message_header: MessageHeader = bincode::deserialize(&buffer).unwrap();
+
+    // println!(
+    //   "{} Received message (tag: {:?}) from {:?} origin {:?}",
+    //   debug_prelude(&orchestra.self_name(), None),
+    //   message_header.relay_tag,
+    //   message_header.sender,
+    //   message_header.origin
+    // );
+
+    orchestra
+      .incoming_messages
+      .write()
+      .await
+      .insert(
+        (
+          message_header.origin.clone(),
+          message_header.message_id.clone(),
+        ),
+        (message_header, stream),
+      );
   }
 }
