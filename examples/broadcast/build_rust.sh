@@ -5,14 +5,14 @@ chmod 777 build
 docker run                                        \
         --platform linux/x86_64                   \
         -u $(id -u):$(id -g)                      \
-        -v $(pwd)/examples/broadcast:/data          \
+        -v $(pwd)/examples/broadcast:/data        \
         -v $(pwd)/build:/build                    \
         -w /                                      \
         swirlc-rust                               \
     swirlc                                        \
         compile                                   \
         --target rust                             \
-        /data/source.swirl                      \
+        /data/source.swirl                        \
         /data/config.yml
 
 # read -p "Press enter to continue"
