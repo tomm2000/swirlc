@@ -38,3 +38,6 @@ cargo build --release
 ```
 
 The `build` folder will contain an example `.sh` script to execute the generated Rust executable on a SLURM cluster.
+
+## Examples
+The `examples` folder contains some synthetic workflows that can be used to test the toolchain. Along with pre-generated workflows, a python script is provided to generate new workflows with different sizes.
