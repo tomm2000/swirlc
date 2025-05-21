@@ -31,7 +31,7 @@ docker run                                        \
         /src/<CONFIG>.yml
 ```
 
-The generated Rust source code will be in the `build` folder, it can be compiled with the Rust cargo toolchain.
+The generated Rust source code will be in the `build` folder, it can be compiled with the [Rust cargo toolchain](https://www.rust-lang.org/tools/install):
 
 ```bash
 cargo build --release
